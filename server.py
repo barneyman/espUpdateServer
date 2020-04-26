@@ -1,4 +1,4 @@
-from flask import Flask, request
+import cherrypy
 import json
 import threading
 import os
@@ -8,12 +8,7 @@ import tarfile
 import time
 import signal
 import logging
-
-app = Flask(__name__)
-
-@app.route('/')
-def index():
-    return 'Hello world'
+import re
 
 
 CONFIG_FILE="config.json"
@@ -34,8 +29,11 @@ class RepoReleases:
 
         self._running=False
         self._stop=False
+        self._polling=False
+        self._streaming=False
 
-        self._poller = threading.Thread(target=self.fetchAssetsTimed, args=(5,))
+
+        self._poller = threading.Thread(target=self.fetchAssetsTimed, args=(20,))
 
         self._poller.start()
 
@@ -190,19 +188,23 @@ class RepoReleases:
             # check we haven't already got this
             if dir not in self._config["manifest"] or "tag_name" not in self._config["manifest"][dir] or topRelease["tag_name"] != self._config["manifest"][dir]["tag_name"]:
 
-                # we should clean up
-                if dir in self._config["manifest"] and "files" in self._config["manifest"][dir]:
-                    for eachFile in self._config["manifest"][dir]["files"]:
-                        logging.info("removing {}".format(eachFile))
-                        filetokill=dir+"/"+eachFile
-                        if os.path.exists(filetokill):
-                            os.remove(dir+"/"+eachFile)
+                #sanity check the tag
+                if self.crackVersion(topRelease["tag_name"]) is None:
+                    logging.error("version is malformed {}".format(topRelease["tag_name"]))
+                else:
+                    # we should clean up
+                    if dir in self._config["manifest"] and "files" in self._config["manifest"][dir]:
+                        for eachFile in self._config["manifest"][dir]["files"]:
+                            logging.info("removing {}".format(eachFile))
+                            filetokill=dir+"/"+eachFile
+                            if os.path.exists(filetokill):
+                                os.remove(dir+"/"+eachFile)
 
-                self._config["manifest"][dir]={}
+                    self._config["manifest"][dir]={}
 
-                self.downloadReleaseAsset(topRelease,dir)
+                    self.downloadReleaseAsset(topRelease,dir)
 
-                self.saveConfig()
+                    self.saveConfig()
 
             else:
                 logging.info("{} {} assets already downloaded".format(dir, topRelease["tag_name"]))
@@ -250,7 +252,11 @@ class RepoReleases:
 
                 logging.debug("Doing a poll")
 
+                self._polling=True
+
                 self.downloadLatestAssets()
+
+                self._polling=False
 
                 self._lastPoll=time.time()
 
@@ -260,7 +266,155 @@ class RepoReleases:
 
         logging.critical("fetchAssetsTimed stopping ...")
 
+
+
+    def vgreater(self, earlier, later):
+
+        # major
+        if earlier["version"][0] > later["version"][0]:
+            return False
+        elif earlier["version"][0] < later["version"][0]:
+            return True
+
+        #major is same
+        #minor
+        if earlier["version"][1] > later["version"][1]:
+            return False
+        elif earlier["version"][1] < later["version"][1]:
+            return True
+
+        #minor is same
+        #build
+        #debug
+        if earlier["version"][2] > later["version"][2]:
+            return False
+        elif earlier["version"][2] < later["version"][2]:
+        # following line to redownload the same f/w            
+        #elif earlier["version"][2] <= later["version"][2]:
+            return True
+
+        return False
+        
+
+
+    def crackVersion(self,vstring):
+
+        versions=re.match("(v\\d+\\.\\d+\\.\\d+)\\.?(pr)?", vstring)
+
+        if versions is None:
+            return None
+
+        if len(versions.group())!=len(vstring):        
+            return None
+
+        preRelease=True if versions.group(2) is not None else False
+
+        # then crack the number
+        cracked=re.match("v(\\d+)\\.(\\d+)\\.(\\d+)", vstring)
+
+        ret={ "version": [ int(cracked.group(1)),int(cracked.group(2)),int(cracked.group(3)) ], "prerelease": preRelease }
+
+        logging.debug("Cracked {} to {}".format(vstring, ret))
+
+        return ret
+
             
+    # web methods
+    @cherrypy.expose
+    def version(self):
+        return "v0"
+
+    @cherrypy.expose
+    def manifest(self):
+        return json.dumps(self._config, indent=4)    
+
+    @cherrypy.expose
+    def updateBinary(self):
+        return self.sendUpdateFile("bin")
+
+    @cherrypy.expose
+    def updateFiles(self):
+        return self.sendUpdateFile("spiffs")
+
+
+    def sendUpdateFile(self, fileTail):
+        # needs headers
+        # HTTP_X_ESP8266_VERSION
+
+        # cherrypy uses TitleCase
+        currentVer = cherrypy.request.headers.get('X-Esp8266-Version')
+        userAgent=cherrypy.request.headers.get('User-Agent')
+
+        if userAgent is None or userAgent!="ESP8266-http-Update":
+            cherrypy.response.status=403
+            logging.warning("HTTPUpdate - Wrong User Agent")
+            return "Error - Wrong User Agent"
+
+        if currentVer is None:
+            cherrypy.response.status=406
+            logging.warning("HTTPUpdate - Error - no version")
+            return "Error - no version"
+
+        # carve that up
+        hardware = currentVer.split("|")
+        if len(hardware)!=2:
+            # not expected
+            cherrypy.response.status=406
+            logging.warning("HTTPUpdate -Error - malformed hardware|version")
+            return "Error - malformed hardware|version"
+
+        # then carve it up
+        versions=self.crackVersion(hardware[1])
+
+        if versions is None:
+            # malformed 
+            cherrypy.response.status=406
+            logging.warning("HTTPUpdate - Error - malformed version")
+            return "Error - malformed version"
+
+        # check if we're polling
+        if self._polling==True:
+            logging.warning("HTTPUpdate -Busy")
+            cherrypy.response.status=503
+            return "Busy"
+
+        dir="prereleases" if versions["prerelease"]==True else "releases"
+        Node = self._config["manifest"][dir]
+        
+
+        if not self.vgreater(versions,self.crackVersion(Node["tag_name"])):
+            cherrypy.response.status=304
+            logging.warning("HTTPUpdate - No upgrade")
+            return "No upgrade"
+
+
+        # now we have to carve the hardware
+        lookfor=hardware[0]+"_.*\\."+fileTail+"$"
+        r=re.compile(lookfor)
+        newlist = list(filter(r.match, Node["files"])) # Read Note
+
+        #should only be one candidate
+        if len(newlist)!=1:
+            cherrypy.response.status=500
+            logging.warning("HTTPUpdate - No candidate")
+            return "No candidate"
+
+
+        macAddress = cherrypy.request.headers.get('Http-X-Esp8266-Sta-Mac')
+
+        logging.info(cherrypy.request.headers)
+        logging.info("Heard from {} - {}".format(currentVer, macAddress) )
+
+
+        name =os.path.abspath("./"+dir+"/"+newlist[0])
+
+        logging.info("returning {}".format(name))
+
+        basename = os.path.basename(name)
+        filename = name
+        mime     = 'application/octet-stream'
+        return cherrypy.lib.static.serve_file(filename, mime, basename)
+
 
 
 
@@ -280,12 +434,6 @@ if __name__ == '__main__':
         # stop my thread
         myrels.stopPoller()
 
-        # stop flask
-        func = request.environ.get('werkzeug.server.shutdown')
-        if func is None:
-            raise RuntimeError('Not running with the Werkzeug Server')
-        else:
-            func()
 
     # handle sigint
     # signal.signal(signal.SIGINT, signal_handler)
@@ -294,6 +442,9 @@ if __name__ == '__main__':
 
     try:
         #app.run(debug=True, host='0.0.0.0', port=8084)
+        cherrypy.server.socket_host = '0.0.0.0' # put it here 
+        cherrypy.quickstart(myrels)
+
         while True:
             pass
 
