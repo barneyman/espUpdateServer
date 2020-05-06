@@ -9,7 +9,8 @@ import time
 import signal
 import logging
 import re
-
+from zeroconf import ServiceBrowser, Zeroconf
+import netifaces
 
 CONFIG_FILE="config.json"
 LOG_FILE="server.log"
@@ -26,16 +27,22 @@ class RepoReleases:
 
         self._releases=[]
         self._prereleases=[]
+        self._legacyRelease=[]
 
         self._running=False
         self._stop=False
         self._polling=False
         self._streaming=False
 
+        self._mdnshosts=[]
+        self._legacyhosts=[]
 
-        self._poller = threading.Thread(target=self.fetchAssetsTimed, args=(20,))
+
+        self._poller = threading.Thread(target=self.fetchAssetsTimed_thread, args=(120,))
+        self._zerconf = threading.Thread(target=self.findDevices_thread, args=(60,))
 
         self._poller.start()
+        self._zerconf.start()
 
         self.loadConfig()
 
@@ -67,6 +74,7 @@ class RepoReleases:
         # clean up
         self._releases=[]
         self._prereleases=[]
+        self._legacyRelease=[]
 
         # this gets all pre/releases - draft too
         releases=self.fetchListOfAllReleases()
@@ -89,6 +97,26 @@ class RepoReleases:
                 self._releases.append(eachRelease)
             
         logging.info("Found {} releases, {} pre-releases".format(len(self._releases),len(self._prereleases)))
+
+        # then get legacy
+        legacy=self.fetchSingleRelease()
+
+        if legacy is not None:
+            self._legacyRelease.append(legacy)
+
+
+    def fetchSingleRelease(self):
+        # v0.0.27
+        url="https://api.github.com/repos/{}/{}/releases/26215342".format(self._owner,self._repo)
+
+        req=requests.get(url)
+        
+        if req.status_code==200:
+            return req.json()
+
+        logging.error("{} returned {}".format(url, req.status_code))
+
+        return None
 
 
     def fetchListOfAllReleases(self):
@@ -222,6 +250,8 @@ class RepoReleases:
         # work out the newest release, and prerelease
         self._downloadIt(self._releases,"releases")
         self._downloadIt(self._prereleases,"prereleases")
+        self._downloadIt(self._legacyRelease,"legacy")
+
 
 
 
@@ -237,10 +267,59 @@ class RepoReleases:
 
             logging.debug("poll stopped!")
 
-    # threaded function        
-    def fetchAssetsTimed(self, timeout):
 
-        logging.critical("fetchAssetsTimed started ...")
+    def remove_service(self, zeroconf, type, name):
+        logging.info("Service {} removed".format(name))
+
+    def add_service(self, zeroconf, type, name):
+        info = zeroconf.get_service_info(type, name)
+        logging.info("Service {} add_service info {}".format(name, info))
+
+
+        def addMDNShost(hosts, info):
+            alreadyThere=[x for x in hosts if x["server"] == info.server]
+            if len(alreadyThere)==0:
+                for address in info.addresses:
+                    stringAddress="{}.{}.{}.{}".format(address[0], address[1], address[2],address[3])
+                    logging.info(stringAddress)
+                    hosts.append({"server":info.server,"address": stringAddress})
+            else:
+                logging.info("already in list")
+
+
+        # carve up the addresses
+        if info is not None:
+
+            # look for legacy
+            if info.type=="_barneyman._tcp.local.":
+                logging.info("Adding mdns")
+                addMDNShost(self._mdnshosts, info)
+            else:
+                logging.info("Adding legacy")
+                addMDNShost(self._legacyhosts, info)
+
+
+
+    # threaded functions
+    def findDevices_thread(self, timeoutSeconds):
+
+        logging.critical("findDevices_thread started ...")
+
+        zeroconf = Zeroconf()
+
+        browser = ServiceBrowser(zeroconf, "_barneyman._tcp.local.", self)
+        #legacy = ServiceBrowser(zeroconf, "_bjfLights._tcp.local.", self)
+
+        while not self._stop:
+
+            time.sleep(timeoutSeconds)
+
+        zeroconf.close()        
+
+
+    def fetchAssetsTimed_thread(self, timeoutMinutes):
+
+        logging.critical("fetchAssetsTimed_thread started ...")
 
         self._running=True
 
@@ -248,7 +327,7 @@ class RepoReleases:
 
         while not self._stop:
 
-            if self._lastPoll is None or ((time.time()-self._lastPoll)>timeout*60):
+            if self._lastPoll is None or ((time.time()-self._lastPoll)>timeoutMinutes*60):
 
                 logging.debug("Doing a poll")
 
@@ -260,12 +339,41 @@ class RepoReleases:
 
                 self._lastPoll=time.time()
 
+                # then ask all devices to upgrade
+
+                self.upgradeAllDevices()
+
             time.sleep(5)
 
         self._running=False
 
-        logging.critical("fetchAssetsTimed stopping ...")
+        logging.critical("fetchAssetsTimed_thread stopping ...")
 
+    def upgradeAllDevices(self, legacy=False):
+        
+        for host in self._mdnshosts:
+
+            upgradeUrl="http://{}//json/upgrade".format(host["address"])
+
+            myIP=cherrypy.server.socket_host
+            myPort=cherrypy.server.socket_port
+
+            if legacy==True:
+                body={"url":"/upgradeBinary","host":myIP,"port":myPort}
+            else:
+                body={"url":"http://{}:{}/upgradeBinary".format(myIP,myPort),"urlSpifs":"http://{}:{}/upgradeFiles".format(myIP,myPort)}
+
+            logging.critical("calling {} with {}".format(upgradeUrl, body))
+
+            try:
+                req=requests.post(upgradeUrl, body)
+
+                if req.status_code==200:
+                    pass                
+
+            except Exception as e:
+                logging.error(e)
+            
 
 
     def vgreater(self, earlier, later):
@@ -345,6 +453,8 @@ class RepoReleases:
         currentVer = cherrypy.request.headers.get('X-Esp8266-Version')
         userAgent=cherrypy.request.headers.get('User-Agent')
 
+        logging.info("request {} ver {}".format(userAgent, currentVer))
+
         if userAgent is None or userAgent!="ESP8266-http-Update":
             cherrypy.response.status=403
             logging.warning("HTTPUpdate - Wrong User Agent")
@@ -355,12 +465,19 @@ class RepoReleases:
             logging.warning("HTTPUpdate - Error - no version")
             return "Error - no version"
 
+        legacy=False
+        # arooga - special, legacy case
+        if currentVer.startswith("lightS_"):
+            currentVer="sonoff_basic|v0.0.0"
+            legacy=True
+
+
         # carve that up
         hardware = currentVer.split("|")
         if len(hardware)!=2:
             # not expected
             cherrypy.response.status=406
-            logging.warning("HTTPUpdate -Error - malformed hardware|version")
+            logging.warning("HTTPUpdate - Error - malformed hardware|version {}".format(currentVer))
             return "Error - malformed hardware|version"
 
         # then carve it up
@@ -378,9 +495,12 @@ class RepoReleases:
             cherrypy.response.status=503
             return "Busy"
 
-        dir="prereleases" if versions["prerelease"]==True else "releases"
+        if legacy==True:
+            dir="legacy"
+        else:
+            dir="prereleases" if versions["prerelease"]==True else "releases"
+
         Node = self._config["manifest"][dir]
-        
 
         if not self.vgreater(versions,self.crackVersion(Node["tag_name"])):
             cherrypy.response.status=304
@@ -442,7 +562,11 @@ if __name__ == '__main__':
 
     try:
         #app.run(debug=True, host='0.0.0.0', port=8084)
-        cherrypy.server.socket_host = '0.0.0.0' # put it here 
+
+        netifaces.ifaddresses('eth0')
+        ip = netifaces.ifaddresses('eth0')[netifaces.AF_INET][0]['addr']        
+
+        cherrypy.server.socket_host = ip #'0.0.0.0' # put it here 
         cherrypy.quickstart(myrels)
 
         while True:
