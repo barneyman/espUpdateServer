@@ -38,8 +38,8 @@ class RepoReleases:
         self._legacyhosts=[]
 
 
-        self._poller = threading.Thread(target=self.fetchAssetsTimed_thread, args=(120,))
-        self._zerconf = threading.Thread(target=self.findDevices_thread, args=(60,))
+        self._poller = threading.Thread(target=self.fetchAssetsTimed_thread, args=(30,))
+        self._zerconf = threading.Thread(target=self.findDevices_thread, args=(2,))
 
         self._poller.start()
         self._zerconf.start()
@@ -301,7 +301,7 @@ class RepoReleases:
 
 
     # threaded functions
-    def findDevices_thread(self, timeoutSeconds):
+    def findDevices_thread(self, timeoutMinutes):
 
         logging.critical("findDevices_thread started ...")
 
@@ -312,7 +312,7 @@ class RepoReleases:
 
         while not self._stop:
 
-            time.sleep(timeoutSeconds)
+            time.sleep(timeoutMinutes*60)
 
         zeroconf.close()        
 
@@ -353,23 +353,30 @@ class RepoReleases:
         
         for host in self._mdnshosts:
 
-            upgradeUrl="http://{}//json/upgrade".format(host["address"])
+            upgradeUrl="http://{}/json/upgrade".format(host["address"])
 
             myIP=cherrypy.server.socket_host
             myPort=cherrypy.server.socket_port
 
             if legacy==True:
-                body={"url":"/upgradeBinary","host":myIP,"port":myPort}
+                body={"url":"/updateBinary","host":myIP,"port":myPort}
             else:
-                body={"url":"http://{}:{}/upgradeBinary".format(myIP,myPort),"urlSpifs":"http://{}:{}/upgradeFiles".format(myIP,myPort)}
+                body={"url":"http://{}:{}/updateBinary".format(myIP,myPort),"urlSpiffs":"http://{}:{}/updateFiles".format(myIP,myPort)}
+
+            body=json.dumps(body)
 
             logging.critical("calling {} with {}".format(upgradeUrl, body))
 
             try:
-                req=requests.post(upgradeUrl, body)
+                # Content-Type: text/plain 
+                req=requests.post(upgradeUrl, body, headers={'Content-Type':'text/plain'})
 
                 if req.status_code==200:
                     pass                
+                else:
+                    logging.error("Failed to post upgrade {}".format(req.status_code))
+
+
 
             except Exception as e:
                 logging.error(e)
@@ -393,10 +400,10 @@ class RepoReleases:
 
         #minor is same
         #build
-        #debug
         if earlier["version"][2] > later["version"][2]:
             return False
         elif earlier["version"][2] < later["version"][2]:
+        # debug
         # following line to redownload the same f/w            
         #elif earlier["version"][2] <= later["version"][2]:
             return True
@@ -539,7 +546,7 @@ class RepoReleases:
 
 
 os.remove(LOG_FILE)
-logging.basicConfig(filename=LOG_FILE,level=logging.DEBUG)
+logging.basicConfig(filename=LOG_FILE,level=logging.DEBUG,format='%(asctime)s %(message)s')
 
 
 
