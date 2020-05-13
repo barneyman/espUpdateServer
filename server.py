@@ -99,15 +99,15 @@ class RepoReleases:
         logging.info("Found {} releases, {} pre-releases".format(len(self._releases),len(self._prereleases)))
 
         # then get legacy
-        legacy=self.fetchSingleRelease()
+        legacy=self.fetchSingleRelease(26335159)
 
         if legacy is not None:
             self._legacyRelease.append(legacy)
 
 
-    def fetchSingleRelease(self):
+    def fetchSingleRelease(self,revision):
         # v0.0.27
-        url="https://api.github.com/repos/{}/{}/releases/26215342".format(self._owner,self._repo)
+        url="https://api.github.com/repos/{}/{}/releases/{}".format(self._owner,self._repo,revision)
 
         req=requests.get(url)
         
@@ -402,8 +402,8 @@ class RepoReleases:
         #build
         if earlier["version"][2] > later["version"][2]:
             return False
-        elif earlier["version"][2] < later["version"][2]:
         # debug
+        elif earlier["version"][2] < later["version"][2]:
         # following line to redownload the same f/w            
         #elif earlier["version"][2] <= later["version"][2]:
             return True
@@ -444,11 +444,11 @@ class RepoReleases:
         return json.dumps(self._config, indent=4)    
 
     @cherrypy.expose
-    def updateBinary(self):
+    def updateBinary(self,**params):
         return self.sendUpdateFile("bin")
 
     @cherrypy.expose
-    def updateFiles(self):
+    def updateFiles(self,**params):
         return self.sendUpdateFile("spiffs")
 
 
@@ -457,44 +457,62 @@ class RepoReleases:
         # HTTP_X_ESP8266_VERSION
 
         # cherrypy uses TitleCase
-        currentVer = cherrypy.request.headers.get('X-Esp8266-Version')
+        currentDeviceVer = cherrypy.request.headers.get('X-Esp8266-Version')
         userAgent=cherrypy.request.headers.get('User-Agent')
 
-        logging.info("request {} ver {}".format(userAgent, currentVer))
+        logging.info("request {} ver {}".format(userAgent, currentDeviceVer))
+
+        prereleaseOverride=False
+        prereleaseRequested=False
+        #get the arg
+        if cherrypy.request.params.get("prerelease") is not None:
+            prereleaseOverride=True
+            if cherrypy.request.params.get("prerelease")=="true":
+                prereleaseRequested=True
+            else:
+                prereleaseRequested=False
+
 
         if userAgent is None or userAgent!="ESP8266-http-Update":
             cherrypy.response.status=403
             logging.warning("HTTPUpdate - Wrong User Agent")
             return "Error - Wrong User Agent"
 
-        if currentVer is None:
+        if currentDeviceVer is None:
             cherrypy.response.status=406
             logging.warning("HTTPUpdate - Error - no version")
             return "Error - no version"
 
         legacy=False
         # arooga - special, legacy case
-        if currentVer.startswith("lightS_"):
-            currentVer="sonoff_basic|v0.0.0"
+        if currentDeviceVer.startswith("lightS_"):
+            currentDeviceVer="sonoff_basic|v0.0.0"
             legacy=True
 
 
         # carve that up
-        hardware = currentVer.split("|")
+        hardware = currentDeviceVer.split("|")
         if len(hardware)!=2:
             # not expected
             cherrypy.response.status=406
-            logging.warning("HTTPUpdate - Error - malformed hardware|version {}".format(currentVer))
+            logging.warning("HTTPUpdate - Error - malformed hardware|version {}".format(currentDeviceVer))
             return "Error - malformed hardware|version"
 
         # then carve it up
         versions=self.crackVersion(hardware[1])
+
+        # check for prerelease request
+        if prereleaseOverride is True:
+            logging.info("Prerelease override {}".format(prereleaseRequested))
+            versions["prerelease"]=prereleaseRequested
+
 
         if versions is None:
             # malformed 
             cherrypy.response.status=406
             logging.warning("HTTPUpdate - Error - malformed version")
             return "Error - malformed version"
+
 
         # check if we're polling
         if self._polling==True:
@@ -530,7 +548,7 @@ class RepoReleases:
         macAddress = cherrypy.request.headers.get('Http-X-Esp8266-Sta-Mac')
 
         logging.info(cherrypy.request.headers)
-        logging.info("Heard from {} - {}".format(currentVer, macAddress) )
+        logging.info("Heard from {} - {}".format(currentDeviceVer, macAddress) )
 
 
         name =os.path.abspath("./"+dir+"/"+newlist[0])
