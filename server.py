@@ -374,7 +374,7 @@ class RepoReleases:
                 if req.status_code==200:
                     pass                
                 else:
-                    logging.error("Failed to post upgrade {}".format(req.status_code))
+                    logging.error("Response to UpgradeYourself was {} - Upgrade Only When Off?".format(req.status_code))
 
 
 
@@ -383,7 +383,7 @@ class RepoReleases:
             
 
 
-    def vgreater(self, earlier, later):
+    def vgreater(self, earlier, later, prerelease):
 
         # major
         if earlier["version"][0] > later["version"][0]:
@@ -402,10 +402,12 @@ class RepoReleases:
         #build
         if earlier["version"][2] > later["version"][2]:
             return False
+
         # debug
         elif earlier["version"][2] < later["version"][2]:
-        # following line to redownload the same f/w            
-        #elif earlier["version"][2] <= later["version"][2]:
+            return True
+        # if they're the same version, but the device has the PR migrate to the release
+        elif (earlier["version"][2] == later["version"][2]) and earlier["prerelease"]==True and later["prerelease"]==False:
             return True
 
         return False
@@ -499,15 +501,14 @@ class RepoReleases:
             return "Error - malformed hardware|version"
 
         # then carve it up
-        versions=self.crackVersion(hardware[1])
+        deviceVersion=self.crackVersion(hardware[1])
 
         # check for prerelease request
         if prereleaseOverride is True:
             logging.info("Prerelease override {}".format(prereleaseRequested))
-            versions["prerelease"]=prereleaseRequested
 
 
-        if versions is None:
+        if deviceVersion is None:
             # malformed 
             cherrypy.response.status=406
             logging.warning("HTTPUpdate - Error - malformed version")
@@ -520,14 +521,18 @@ class RepoReleases:
             cherrypy.response.status=503
             return "Busy"
 
+        # sort out which branch to pass to them
         if legacy==True:
             dir="legacy"
         else:
-            dir="prereleases" if versions["prerelease"]==True else "releases"
+            if prereleaseOverride==False:
+                dir="prereleases" if deviceVersion["prerelease"]==True else "releases"
+            else:
+                dir="prereleases" if prereleaseRequested==True else "releases"
 
         Node = self._config["manifest"][dir]
 
-        if not self.vgreater(versions,self.crackVersion(Node["tag_name"])):
+        if not self.vgreater(deviceVersion,self.crackVersion(Node["tag_name"]), (prereleaseRequested if prereleaseOverride==True else None)):
             cherrypy.response.status=304
             logging.warning("HTTPUpdate - No upgrade")
             return "No upgrade"
@@ -545,9 +550,8 @@ class RepoReleases:
             return "No candidate"
 
 
-        macAddress = cherrypy.request.headers.get('Http-X-Esp8266-Sta-Mac')
-
-        logging.info(cherrypy.request.headers)
+        macAddress = cherrypy.request.headers.get('X-Esp8266-Sta-Mac')
+        #logging.info(cherrypy.request.headers)
         logging.info("Heard from {} - {}".format(currentDeviceVer, macAddress) )
 
 
