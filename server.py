@@ -361,7 +361,7 @@ class RepoReleases:
             if legacy==True:
                 body={"url":"/updateBinary","host":myIP,"port":myPort}
             else:
-                body={"url":"http://{}:{}/updateBinary".format(myIP,myPort),"urlSpiffs":"http://{}:{}/updateFiles".format(myIP,myPort)}
+                body={"url":"http://{}:{}/updateBinary".format(myIP,myPort),"urlSpiffs":"http://{}:{}/updateSpiffs".format(myIP,myPort)}
 
             body=json.dumps(body)
 
@@ -450,7 +450,7 @@ class RepoReleases:
         return self.sendUpdateFile("bin")
 
     @cherrypy.expose
-    def updateFiles(self,**params):
+    def updateSpiffs(self,**params):
         return self.sendUpdateFile("spiffs")
 
 
