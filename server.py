@@ -566,8 +566,9 @@ class RepoReleases:
 
 
 
+if os.path.exists(LOG_FILE):
+	os.remove(LOG_FILE)
 
-os.remove(LOG_FILE)
 logging.basicConfig(filename=LOG_FILE,level=logging.DEBUG,format='%(asctime)s %(message)s')
 
 
