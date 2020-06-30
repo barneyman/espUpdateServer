@@ -9,13 +9,16 @@ import time
 import signal
 import logging
 import re
+import sys
 from zeroconf import ServiceBrowser, Zeroconf
 #import netifaces
 
 DATA_STEM="/data"
 
 CONFIG_FILE=DATA_STEM+"/server_config.json"
-LOG_FILE=DATA_STEM+"/server.log"
+
+#LOG_FILE=DATA_STEM+"/server.log"
+LOG_FILE=None
 
 
 
@@ -568,11 +571,14 @@ class RepoReleases:
         return cherrypy.lib.static.serve_file(filename, mime, basename)
 
 
+if LOG_FILE is not None:
 
-if os.path.exists(LOG_FILE):
-	os.remove(LOG_FILE)
+    if os.path.exists(LOG_FILE):
+        os.remove(LOG_FILE)
 
-logging.basicConfig(filename=LOG_FILE,level=logging.DEBUG,format='%(asctime)s %(message)s')
+    logging.basicConfig(filename=LOG_FILE,level=logging.DEBUG,format='%(asctime)s %(message)s')
+else:
+    logging.basicConfig(stream=sys.stdout,level=logging.DEBUG,format='%(asctime)s %(message)s')
 
 
 
