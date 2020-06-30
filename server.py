@@ -10,10 +10,12 @@ import signal
 import logging
 import re
 from zeroconf import ServiceBrowser, Zeroconf
-import netifaces
+#import netifaces
 
-CONFIG_FILE="config.json"
-LOG_FILE="server.log"
+DATA_STEM="/data"
+
+CONFIG_FILE=DATA_STEM+"/server_config.json"
+LOG_FILE=DATA_STEM+"/server.log"
 
 
 
@@ -151,6 +153,8 @@ class RepoReleases:
 
     def downloadReleaseAsset(self, release, dir):
 
+        osdir=os.path.join(DATA_STEM,dir)
+
         # always ensure dir is there
         if not os.path.exists(dir) or not os.path.isdir(dir):
             logging.debug("Creating directory %s", dir)
@@ -183,8 +187,7 @@ class RepoReleases:
                             # detar into pd
                             tf=tarfile.open(filename)
 
-                            tf.extractall(dir)
-
+                            tf.extractall(osdir)
 
                             for member in tf.getmembers():
                                 self._config["manifest"][dir]["files"].append(member.name)
@@ -555,7 +558,7 @@ class RepoReleases:
         logging.info("Heard from {} - {}".format(currentDeviceVer, macAddress) )
 
 
-        name =os.path.abspath("./"+dir+"/"+newlist[0])
+        name =os.path.abspath(DATA_STEM+dir+"/"+newlist[0])
 
         logging.info("returning {}".format(name))
 
@@ -585,18 +588,15 @@ if __name__ == '__main__':
         myrels.stopPoller()
 
 
-    # handle sigint
-    # signal.signal(signal.SIGINT, signal_handler)
-
-
 
     try:
-        #app.run(debug=True, host='0.0.0.0', port=8084)
 
-        netifaces.ifaddresses('eth0')
-        ip = netifaces.ifaddresses('eth0')[netifaces.AF_INET][0]['addr']        
+        # itf="wlan0" # eth0
+        # netifaces.ifaddresses(itf)
+        # ip = netifaces.ifaddresses(itf)[netifaces.AF_INET][0]['addr']        
+        ip='0.0.0.0'
 
-        cherrypy.server.socket_host = ip #'0.0.0.0' # put it here 
+        cherrypy.server.socket_host = ip 
         cherrypy.quickstart(myrels)
 
         while True:
