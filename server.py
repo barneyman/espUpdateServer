@@ -16,6 +16,7 @@ from zeroconf import ServiceBrowser, Zeroconf
 DATA_STEM="/data"
 
 CONFIG_FILE="./server_config.json"
+HA_ADDON_CONFIG_FILE="/data/options.json"
 
 #LOG_FILE=DATA_STEM+"./server.log"
 LOG_FILE=None
@@ -60,7 +61,16 @@ class RepoReleases:
         else:
             self._config={ "manifest":{} }
 
-        
+        self.loadHAconfig()
+
+
+    def loadHAconfig(self):
+        if os.path.isfile(HA_ADDON_CONFIG_FILE):
+            with open(HA_ADDON_CONFIG_FILE) as json_file:
+                self._haconfig=json.load(json_file)        
+        else:
+            self._haconfig={ "host":"0.0.0.0" }
+
 
     def saveConfig(self):
 
@@ -368,8 +378,11 @@ class RepoReleases:
 
             upgradeUrl="http://{}/json/upgrade".format(host["address"])
 
-            myIP=cherrypy.server.socket_host
-            #myIP="hassio"
+            # while running as an HA addon there's a config at /data/options.json
+            # which is populated from options in config.json
+
+            myIP=myrels._haconfig["host"]
+
             myPort=cherrypy.server.socket_port
 
             if legacy==True:
@@ -613,14 +626,10 @@ if __name__ == '__main__':
         # netifaces.ifaddresses(itf)
         # ip = netifaces.ifaddresses(itf)[netifaces.AF_INET][0]['addr']        
         
-        try:
-            ip=socket.gethostbyname("host.docker.internal")
-        except:
-            ip='0.0.0.0'
 
-        logging.info("using {} as hostIP".format(ip) )
 
-        cherrypy.server.socket_host = ip 
+
+        cherrypy.server.socket_host = '0.0.0.0'
         cherrypy.quickstart(myrels)
 
         while True:
