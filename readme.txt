@@ -1,5 +1,0 @@
-needs
-
-zeroconf
-cherrypy
-netifaces

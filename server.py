@@ -10,14 +10,14 @@ import signal
 import logging
 import re
 import sys
+import socket
 from zeroconf import ServiceBrowser, Zeroconf
-#import netifaces
 
 DATA_STEM="/data"
 
-CONFIG_FILE=DATA_STEM+"/server_config.json"
+CONFIG_FILE="./server_config.json"
 
-#LOG_FILE=DATA_STEM+"/server.log"
+#LOG_FILE=DATA_STEM+"./server.log"
 LOG_FILE=None
 
 
@@ -314,7 +314,9 @@ class RepoReleases:
         zeroconf = Zeroconf()
 
         browser = ServiceBrowser(zeroconf, "_barneyman._tcp.local.", self)
-        #legacy = ServiceBrowser(zeroconf, "_bjfLights._tcp.local.", self)
+        
+        # TODO remove this
+        # self._mdnshosts.append({"server":"esp_b75c4f","address": "192.168.51.131"})
 
         while not self._stop:
 
@@ -356,12 +358,15 @@ class RepoReleases:
         logging.critical("fetchAssetsTimed_thread stopping ...")
 
     def upgradeAllDevices(self, legacy=False):
+
+        logging.info("calling upgradeAllDevices with {} devices".format(len(self._mdnshosts)))
         
         for host in self._mdnshosts:
 
             upgradeUrl="http://{}/json/upgrade".format(host["address"])
 
             myIP=cherrypy.server.socket_host
+            #myIP="hassio"
             myPort=cherrypy.server.socket_port
 
             if legacy==True:
@@ -372,6 +377,9 @@ class RepoReleases:
             body=json.dumps(body)
 
             logging.critical("calling {} with {}".format(upgradeUrl, body))
+
+
+            continue
 
             try:
                 # Content-Type: text/plain 
@@ -560,8 +568,7 @@ class RepoReleases:
         #logging.info(cherrypy.request.headers)
         logging.info("Heard from {} - {}".format(currentDeviceVer, macAddress) )
 
-
-        name =os.path.abspath(DATA_STEM+dir+"/"+newlist[0])
+        name= os.path.join(os.path.join(DATA_STEM,dir),newlist[0])
 
         logging.info("returning {}".format(name))
 
@@ -580,7 +587,9 @@ if LOG_FILE is not None:
 else:
     logging.basicConfig(stream=sys.stdout,level=logging.DEBUG,format='%(asctime)s %(message)s')
 
-
+    # define a Handler which writes INFO messages or higher to the sys.stderr
+    console = logging.StreamHandler()
+    console.setLevel(logging.INFO)
 
 # entry point
 if __name__ == '__main__':
@@ -600,7 +609,13 @@ if __name__ == '__main__':
         # itf="wlan0" # eth0
         # netifaces.ifaddresses(itf)
         # ip = netifaces.ifaddresses(itf)[netifaces.AF_INET][0]['addr']        
-        ip='0.0.0.0'
+        
+        try:
+            ip=socket.gethostbyname("host.docker.internal")
+        except:
+            ip='0.0.0.0'
+
+        logging.info("using {} as hostIP".format(ip) )
 
         cherrypy.server.socket_host = ip 
         cherrypy.quickstart(myrels)
