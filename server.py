@@ -274,6 +274,9 @@ class RepoReleases:
             logging.debug("poll stopped!")
 
 
+    def update_service(self, zeroconf, type, name):
+        logging.info("Service {} updated".format(name))
+
     def remove_service(self, zeroconf, type, name):
         logging.info("Service {} removed".format(name))
 
