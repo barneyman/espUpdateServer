@@ -38,6 +38,7 @@ class RepoReleases:
         self._stop=False
         self._polling=False
         self._streaming=False
+        self._updatePending=False
 
         self._mdnshosts=[]
         self._legacyhosts=[]
@@ -254,6 +255,9 @@ class RepoReleases:
 
                     self.saveConfig()
 
+                    # shits changed yo, worth an update loop
+                    self._updatePending=True
+
             else:
                 logger.info("{} {} assets already downloaded".format(dir, topRelease["tag_name"]))
 
@@ -357,7 +361,7 @@ class RepoReleases:
 
             if self._lastPoll is None or ((time.time()-self._lastPoll)>timeoutMinutes*60):
 
-                logger.debug("Doing a poll")
+                logger.debug("Doing a download/upgrade poll")
 
                 self._polling=True
 
@@ -368,8 +372,12 @@ class RepoReleases:
                 self._lastPoll=time.time()
 
                 # then ask all devices to upgrade
-
+                if self._updatePending==True:
                 self.upgradeAllDevices()
+                else:
+                    logger.debug("optimised out an UpgradeAll")
+                
+                self._updatePending=False
 
             time.sleep(5)
 
