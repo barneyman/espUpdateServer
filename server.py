@@ -296,7 +296,7 @@ class RepoReleases:
 
 
     def update_service(self, zeroconf, type, name):
-        logger.info("Service {} updated".format(name))
+        logger.debug("Service {} updated".format(name))
 
     def remove_service(self, zeroconf, type, name):
         logger.info("Service {} removed".format(name))
@@ -614,10 +614,10 @@ if LOG_FILE is not None:
     if os.path.exists(LOG_FILE):
         os.remove(LOG_FILE)
 
-    logging.basicConfig(filename=LOG_FILE,level=logging.WARNING,format='%(asctime)s %(message)s')
+    logging.basicConfig(filename=LOG_FILE,level=logging.WARNING,format='%(asctime)s:%(levelname)s:%(message)s')
 
 else:
-    logging.basicConfig(stream=sys.stdout,level=logging.WARNING,format='%(asctime)s %(message)s')
+    logging.basicConfig(stream=sys.stdout,level=logging.WARNING,format='%(asctime)s:%(levelname)s:%(message)s')
 
     # define a Handler which writes INFO messages or higher to the sys.stderr
     logger=logging.getLogger("updater")
