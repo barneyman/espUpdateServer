@@ -74,8 +74,11 @@ class RepoReleases:
             with open(HA_ADDON_CONFIG_FILE) as json_file:
                 self._haconfig=json.load(json_file)        
         else:
-            self._haconfig={ "host":"0.0.0.0", "logging":"DEBUG","prerelease":False, "release":True,"legacy":True }
+            self._haconfig={ "host":"0.0.0.0", "logging":"DEBUG","prerelease":False, "release":True,"legacy":True, "port":8080 }
 
+
+    def port(self):
+        return self._haconfig["port"]
 
     def saveConfig(self):
 
@@ -373,7 +376,7 @@ class RepoReleases:
 
                 # then ask all devices to upgrade
                 if self._updatePending==True:
-                self.upgradeAllDevices()
+                    self.upgradeAllDevices()
                 else:
                     logger.debug("optimised out an UpgradeAll")
                 
@@ -648,6 +651,7 @@ if __name__ == '__main__':
 
 
         cherrypy.server.socket_host = '0.0.0.0'
+        cherrypy.server.socket.port=myrels.port()
         cherrypy.quickstart(myrels)
 
         while True:
