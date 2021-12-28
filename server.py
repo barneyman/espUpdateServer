@@ -70,6 +70,8 @@ class RepoReleases:
 
 
     def loadHAconfig(self):
+        # this file will be populated by HA when run as an addon
+        # it's the options in config.json
         if os.path.isfile(HA_ADDON_CONFIG_FILE):
             with open(HA_ADDON_CONFIG_FILE) as json_file:
                 self._haconfig=json.load(json_file)        
@@ -231,7 +233,7 @@ class RepoReleases:
 
     def _downloadIt(self, list, dir):
 
-        logger.info("downloadit {}".format(dir))
+        logger.info("Fetching {}".format(dir))
 
         if len(list)>0:
 
@@ -314,7 +316,7 @@ class RepoReleases:
             if len(alreadyThere)==0:
                 for address in info.addresses:
                     stringAddress="{}.{}.{}.{}".format(address[0], address[1], address[2],address[3])
-                    logger.info(stringAddress)
+                    logger.debug(stringAddress)
                     hosts.append({"server":info.server,"address": stringAddress})
             else:
                 logger.info("already in list")
@@ -325,10 +327,10 @@ class RepoReleases:
 
             # look for legacy
             if info.type=="_barneyman._tcp.local.":
-                logger.info("Adding mdns")
+                logger.debug("Adding mdns")
                 addMDNShost(self._mdnshosts, info)
             else:
-                logger.info("Adding legacy")
+                logger.debug("Adding legacy")
                 addMDNShost(self._legacyhosts, info)
 
 
@@ -346,8 +348,7 @@ class RepoReleases:
         # self._mdnshosts.append({"server":"esp_b75c4f","address": "192.168.51.131"})
 
         while not self._stop:
-
-            time.sleep(timeoutMinutes*60)
+            pass
 
         zeroconf.close()        
 
@@ -378,9 +379,10 @@ class RepoReleases:
                 if self._updatePending==True:
                     self.upgradeAllDevices()
                 else:
-                    logger.debug("optimised out an UpgradeAll")
+                    logger.debug("optimised out an UpgradeAll http://./upgradeAll to reset")
                 
-                self._updatePending=False
+                # TODO fix this
+                self._updatePending=True
 
             time.sleep(5)
 
@@ -412,8 +414,6 @@ class RepoReleases:
 
             logger.debug("calling {} with {}".format(upgradeUrl, body))
 
-
-            continue
 
             try:
                 # Content-Type: text/plain 
@@ -501,6 +501,11 @@ class RepoReleases:
     def updateSpiffs(self,**params):
         return self.sendUpdateFile("spiffs")
 
+    @cherrypy.expose
+    def upgradeAll(self):
+        self._updatePending=True
+        return 
+
 
     def sendUpdateFile(self, fileTail):
         # needs headers
@@ -510,7 +515,7 @@ class RepoReleases:
         currentDeviceVer = cherrypy.request.headers.get('X-Esp8266-Version')
         userAgent=cherrypy.request.headers.get('User-Agent')
 
-        logger.info("request {} ver {}".format(userAgent, currentDeviceVer))
+        logger.debug("request {} ver {}".format(userAgent, currentDeviceVer))
 
         prereleaseOverride=False
         prereleaseRequested=False
@@ -525,12 +530,12 @@ class RepoReleases:
 
         if userAgent is None or userAgent!="ESP8266-http-Update":
             cherrypy.response.status=403
-            logger.warning("HTTPUpdate - Wrong User Agent")
+            logger.error("HTTPUpdate - Wrong User Agent")
             return "Error - Wrong User Agent"
 
         if currentDeviceVer is None:
             cherrypy.response.status=406
-            logger.warning("HTTPUpdate - Error - no version")
+            logger.error("HTTPUpdate - Error - no version")
             return "Error - no version"
 
         legacy=False
@@ -553,7 +558,7 @@ class RepoReleases:
 
         # check for prerelease request
         if prereleaseOverride is True:
-            logger.info("Prerelease override {}".format(prereleaseRequested))
+            logger.debug("Prerelease override {}".format(prereleaseRequested))
 
 
         if deviceVersion is None:
@@ -565,7 +570,7 @@ class RepoReleases:
 
         # check if we're polling
         if self._polling==True:
-            logger.warning("HTTPUpdate -Busy")
+            logger.warning("HTTPUpdate - Busy")
             cherrypy.response.status=503
             return "Busy"
 
@@ -582,7 +587,7 @@ class RepoReleases:
 
         if not self.vgreater(deviceVersion,self.crackVersion(Node["tag_name"]), (prereleaseRequested if prereleaseOverride==True else None)):
             cherrypy.response.status=304
-            logger.warning("HTTPUpdate - No upgrade")
+            logger.info("HTTPUpdate - No upgrade")
             return "No upgrade"
 
 
@@ -635,7 +640,7 @@ if __name__ == '__main__':
 
     def signal_handler(sig, frame):
 
-        logger.info("Detected SIGINT")
+        logger.warning("Detected SIGINT")
         # stop my thread
         myrels.stopPoller()
 
@@ -643,24 +648,19 @@ if __name__ == '__main__':
 
     try:
 
-        # itf="wlan0" # eth0
-        # netifaces.ifaddresses(itf)
-        # ip = netifaces.ifaddresses(itf)[netifaces.AF_INET][0]['addr']        
-        
+        cherrypy.config.update({'server.socket_port': myrels.port()})
+        cherrypy.config.update({'server.socket_host' : '0.0.0.0'})
 
-
-
-        cherrypy.server.socket_host = '0.0.0.0'
-        cherrypy.server.socket.port=myrels.port()
         cherrypy.quickstart(myrels)
 
-        while True:
+        while not myrels._stop:
             pass
 
     except Exception as e:
 
         logger.error(e)
 
+    logger.warning("exiting")
 
     myrels.stopPoller()
 
