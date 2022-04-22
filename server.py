@@ -382,7 +382,7 @@ class RepoReleases:
                 
                 self._updatePending=False
 
-            time.sleep(5)
+            time.sleep(60)
 
         self._running=False
 
@@ -655,7 +655,7 @@ if __name__ == '__main__':
         cherrypy.quickstart(myrels)
 
         while True:
-            pass
+            time.sleep(60)
 
     except Exception as e:
 
