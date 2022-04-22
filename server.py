@@ -76,7 +76,7 @@ class RepoReleases:
             with open(HA_ADDON_CONFIG_FILE) as json_file:
                 self._haconfig=json.load(json_file)        
         else:
-            self._haconfig={ "host":"0.0.0.0", "logging":"DEBUG","prerelease":False, "release":True,"legacy":True, "port":8080 }
+            self._haconfig={ "host":"0.0.0.0", "logging":"DEBUG","prerelease":False, "release":True,"legacy":True, "port":8080, "poll":15 }
 
 
     def port(self):
@@ -373,7 +373,7 @@ class RepoReleases:
 
         while not self._stop:
 
-            if self._lastPoll is None or ((time.time()-self._lastPoll)>timeoutMinutes*60):
+            if self._lastPoll is None or ((time.time()-self._lastPoll)>timeoutMinutes*self._haconfig.poll):
 
                 logger.debug("Doing a download/upgrade poll")
 
