@@ -47,8 +47,8 @@ class RepoReleases:
         self._poller = threading.Thread(target=self.fetchAssetsTimed_thread, args=(30,))
         self._zerconf = threading.Thread(target=self.findDevices_thread, args=(2,))
 
-        self._poller.start()
         self._zerconf.start()
+        self._poller.start()
 
         self.loadConfig()
 
@@ -305,6 +305,18 @@ class RepoReleases:
 
     def remove_service(self, zeroconf, type, name):
         logger.info("Service {} removed".format(name))
+        info = zeroconf.get_service_info(type, name)
+
+        def delMDNShost(hosts, info):
+
+            for each in hosts:
+                if hosts["server"]==info.server:
+                    hosts.remove(each)
+                    return
+
+
+        delMDNShost(self._mdnshosts, info)
+        
 
     def add_service(self, zeroconf, type, name):
         info = zeroconf.get_service_info(type, name)
@@ -344,10 +356,8 @@ class RepoReleases:
 
         browser = ServiceBrowser(zeroconf, "_barneyman._tcp.local.", self)
         
-        # TODO remove this
-        # self._mdnshosts.append({"server":"esp_b75c4f","address": "192.168.51.131"})
-
         while not self._stop:
+            time.sleep(0) # this is a thread yield apparently
             pass
 
         zeroconf.close()        
