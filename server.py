@@ -44,7 +44,7 @@ class RepoReleases:
         self._legacyhosts=[]
 
 
-        self._poller = threading.Thread(target=self.fetchAssetsTimed_thread, args=(30,))
+        self._poller = threading.Thread(target=self.fetchAssetsTimed_thread, args=())
         self._zerconf = threading.Thread(target=self.findDevices_thread, args=(2,))
 
         self._zerconf.start()
@@ -76,7 +76,7 @@ class RepoReleases:
             with open(HA_ADDON_CONFIG_FILE) as json_file:
                 self._haconfig=json.load(json_file)        
         else:
-            self._haconfig={ "host":"0.0.0.0", "logging":"DEBUG","prerelease":False, "release":True,"legacy":True, "port":8080, "poll":15 }
+            self._haconfig={ "host":"hassio", "logging":"DEBUG","prerelease":False, "release":True,"legacy":True, "port":8080, "poll":5 }
 
 
     def port(self):
@@ -302,20 +302,23 @@ class RepoReleases:
 
     def update_service(self, zeroconf, type, name):
         logger.debug("Service {} updated".format(name))
+        # it's possible the version has changed, catch that
+        self.remove_service(zeroconf, type, name)
+        self.add_service(zeroconf, type, name)
 
     def remove_service(self, zeroconf, type, name):
         logger.info("Service {} removed".format(name))
         info = zeroconf.get_service_info(type, name)
 
-        def delMDNShost(hosts, info):
+        def delMDNShost(hosts,name, info):
 
             for each in hosts:
-                if hosts["server"]==info.server:
+                if each["name"]==name:
                     hosts.remove(each)
                     return
 
 
-        delMDNShost(self._mdnshosts, info)
+        delMDNShost(self._mdnshosts,name, info)
         
 
     def add_service(self, zeroconf, type, name):
@@ -323,13 +326,18 @@ class RepoReleases:
         logger.info("Service {} add_service info {}".format(name, info))
 
 
-        def addMDNShost(hosts, info):
+        def addMDNShost(hosts, name, info):
             alreadyThere=[x for x in hosts if x["server"] == info.server]
             if len(alreadyThere)==0:
                 for address in info.addresses:
                     stringAddress="{}.{}.{}.{}".format(address[0], address[1], address[2],address[3])
                     logger.debug(stringAddress)
-                    hosts.append({"server":info.server,"address": stringAddress})
+                    newhost={"name":name, "server":info.server,"address": stringAddress}
+                    # check for version in properties - props is utf8, so decode
+                    if b"version" in info.properties:
+                        newhost["version"]=info.properties[b"version"].decode("UTF8")
+                    logger.debug(newhost)
+                    hosts.append(newhost)
             else:
                 logger.info("already in list")
 
@@ -340,10 +348,10 @@ class RepoReleases:
             # look for legacy
             if info.type=="_barneyman._tcp.local.":
                 logger.debug("Adding mdns")
-                addMDNShost(self._mdnshosts, info)
+                addMDNShost(self._mdnshosts,name, info)
             else:
                 logger.debug("Adding legacy")
-                addMDNShost(self._legacyhosts, info)
+                addMDNShost(self._legacyhosts,name, info)
 
 
 
@@ -357,13 +365,13 @@ class RepoReleases:
         browser = ServiceBrowser(zeroconf, "_barneyman._tcp.local.", self)
         
         while not self._stop:
-            time.sleep(0) # this is a thread yield apparently
+            time.sleep(10)
             pass
 
         zeroconf.close()        
 
 
-    def fetchAssetsTimed_thread(self, timeoutMinutes):
+    def fetchAssetsTimed_thread(self):
 
         logger.critical("fetchAssetsTimed_thread started ...")
 
@@ -373,7 +381,7 @@ class RepoReleases:
 
         while not self._stop:
 
-            if self._lastPoll is None or ((time.time()-self._lastPoll)>timeoutMinutes*self._haconfig.poll):
+            if self._lastPoll is None or ((time.time()-self._lastPoll)>self._haconfig["poll"]*60):
 
                 logger.debug("Doing a download/upgrade poll")
 
@@ -406,6 +414,29 @@ class RepoReleases:
         
         for host in self._mdnshosts:
 
+            # quick optimisation, if there is a version, crack it early
+            if "version" in host:
+                hardware = host["version"].split("|")
+                deviceVersion=self.crackVersion(hardware[1])
+
+                doupdate=False
+
+                if self._haconfig["prerelease"] and deviceVersion["prerelease"]:
+                    # check the top prerelease
+                    toppre=self.crackVersion( self._prereleases[0]["tag_name"])
+                    doupdate=self.vgreater(deviceVersion,toppre,True)
+                    logger.debug("mdns ver {} prerel {} result {}".format(deviceVersion,toppre,doupdate))
+
+                if not doupdate:
+                    toprel=self.crackVersion( self._releases[0]["tag_name"])
+                    doupdate=self.vgreater(deviceVersion,toprel,True)
+                    logger.debug("mdns ver {} rel {} result {}".format(deviceVersion,toprel,doupdate))
+
+                if not doupdate:
+                    logger.debug("optimised out an update")
+                    continue
+
+
             upgradeUrl="http://{}/json/upgrade".format(host["address"])
 
             # while running as an HA addon there's a config at /data/options.json
@@ -430,9 +461,10 @@ class RepoReleases:
                 req=requests.post(upgradeUrl, body, headers={'Content-Type':'text/plain'})
 
                 if req.status_code==200:
-                    pass                
+                    # stop us getting bombarded
+                    time.sleep(10)
                 else:
-                    logger.error("Response to UpgradeYourself was {} - Upgrade Only When Off?".format(req.status_code))
+                    logger.error("Response to UpgradeYourself was {} - Upgrade Only When Off, or refusing pre-rels?".format(req.status_code))
 
 
 
@@ -529,13 +561,18 @@ class RepoReleases:
 
         prereleaseOverride=False
         prereleaseRequested=False
-        #get the arg
-        if cherrypy.request.params.get("prerelease") is not None:
+        
+        # if we are hosting prerels
+        if self._haconfig["prerelease"]:
+            #get the arg
+            if cherrypy.request.params.get("prerelease") is not None:
+                prereleaseOverride=True
+                if cherrypy.request.params.get("prerelease")=="true":
+                    prereleaseRequested=True
+                else:
+                    prereleaseRequested=False
+        else:
             prereleaseOverride=True
-            if cherrypy.request.params.get("prerelease")=="true":
-                prereleaseRequested=True
-            else:
-                prereleaseRequested=False
 
 
         if userAgent is None or userAgent!="ESP8266-http-Update":
