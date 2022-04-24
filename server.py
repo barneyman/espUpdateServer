@@ -76,7 +76,7 @@ class RepoReleases:
             with open(HA_ADDON_CONFIG_FILE) as json_file:
                 self._haconfig=json.load(json_file)        
         else:
-            self._haconfig={ "host":"hassio", "logging":"DEBUG","prerelease":True, "release":True,"legacy":True, "port":8080, "poll":15 }
+            self._haconfig={ "host":"hassio", "logging":"INFO","prerelease":True, "release":True,"legacy":True, "port":8080, "poll":15 }
 
 
     def port(self):
@@ -94,7 +94,7 @@ class RepoReleases:
     # fetch all available releases
     def gather(self):
 
-        logger.info("Gathering ...")
+        logger.info("Gathering assets from Github ...")
 
         # clean up
         self._releases=[]
@@ -117,8 +117,10 @@ class RepoReleases:
                 continue
 
             if "prerelease" in eachRelease and eachRelease["prerelease"]==True:
+                logger.debug("Found prerelease {}".format(eachRelease["tag_name"]))
                 self._prereleases.append(eachRelease)
             else:
+                logger.debug("Found release {}".format(eachRelease["tag_name"]))
                 self._releases.append(eachRelease)
             
         logger.info("Found {} releases, {} pre-releases".format(len(self._releases),len(self._prereleases)))
@@ -139,7 +141,7 @@ class RepoReleases:
         if req.status_code==200:
             return req.json()
 
-        logger.error("{} returned {}".format(url, req.status_code))
+        logger.error("fetchSingleRelease : {} returned {}".format(url, req.status_code))
 
         return None
 
@@ -154,7 +156,7 @@ class RepoReleases:
         if req.status_code==200:
             return req.json()
 
-        logger.error("{} returned {}".format(url, req.status_code))
+        logger.error("fetchListOfAllReleases : {} returned {}".format(url, req.status_code))
 
         return None
 
@@ -169,7 +171,7 @@ class RepoReleases:
         if req.status_code==200:
             return req.json()
 
-        logger.error("{} returned {}".format(url, req.status_code))
+        logger.error("fetchReleaseAssets : {} returned {}".format(url, req.status_code))
 
         return None
 
@@ -301,7 +303,6 @@ class RepoReleases:
 
 
     def update_service(self, zeroconf, type, name):
-        logger.debug("Service {} updated".format(name))
         # it's possible the version has changed, catch that
         self.add_service(zeroconf, type, name)
 
@@ -322,7 +323,7 @@ class RepoReleases:
 
     def add_service(self, zeroconf, type, name):
         info = zeroconf.get_service_info(type, name)
-        logger.info("Service {} add_service info {}".format(name, info))
+        logger.debug("Service {} add_service info {}".format(name, info))
 
 
         def addMDNShost(hosts, name, info):
@@ -337,12 +338,12 @@ class RepoReleases:
                 hostversion=info.properties[b"version"].decode("UTF8")
 
             if len(alreadyThere)!=0:
-                logger.debug("updating")
+                logger.info("updating Service {} add_service info {}".format(name, info))
                 alreadyThere[0]["address"]=stringAddress
                 if hostversion is not None:
                     alreadyThere[0]["version"]=hostversion
             else:
-                logger.debug("adding")
+                logger.info("adding Service {} add_service info {}".format(name, info))
                 newhost={"name":name, "server":info.server,"address": stringAddress}
                 # check for version in properties - props is utf8, so decode
                 if b"version" in info.properties:
@@ -357,10 +358,8 @@ class RepoReleases:
 
             # look for legacy
             if info.type=="_barneyman._tcp.local.":
-                logger.debug("Adding mdns")
                 addMDNShost(self._mdnshosts,name, info)
             else:
-                logger.debug("Adding legacy")
                 addMDNShost(self._legacyhosts,name, info)
 
 
@@ -459,6 +458,7 @@ class RepoReleases:
 
             body=json.dumps(body)
 
+            logger.info("Asking {} to update itself".format(host["address"]) )
             logger.debug("calling {} with {}".format(upgradeUrl, body))
 
 
@@ -567,7 +567,7 @@ class RepoReleases:
         currentDeviceVer = cherrypy.request.headers.get('X-Esp8266-Version')
         userAgent=cherrypy.request.headers.get('User-Agent')
 
-        logger.debug("request {} ver {}".format(userAgent, currentDeviceVer))
+        logger.debug("serve update request {} ver {}".format(userAgent, currentDeviceVer))
 
         prereleaseOverride=False
         prereleaseRequested=False
@@ -644,7 +644,7 @@ class RepoReleases:
 
         if not self.vgreater(deviceVersion,self.crackVersion(Node["tag_name"]), (prereleaseRequested if prereleaseOverride==True else None)):
             cherrypy.response.status=304
-            logger.info("HTTPUpdate - No upgrade")
+            logger.info("No upgrade available for {}".format(deviceVersion))
             return "No upgrade"
 
 
