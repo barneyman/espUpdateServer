@@ -76,7 +76,7 @@ class RepoReleases:
             with open(HA_ADDON_CONFIG_FILE) as json_file:
                 self._haconfig=json.load(json_file)        
         else:
-            self._haconfig={ "host":"hassio", "logging":"DEBUG","prerelease":False, "release":True,"legacy":True, "port":8080, "poll":5 }
+            self._haconfig={ "host":"hassio", "logging":"DEBUG","prerelease":True, "release":True,"legacy":True, "port":8080, "poll":15 }
 
 
     def port(self):
@@ -303,7 +303,6 @@ class RepoReleases:
     def update_service(self, zeroconf, type, name):
         logger.debug("Service {} updated".format(name))
         # it's possible the version has changed, catch that
-        self.remove_service(zeroconf, type, name)
         self.add_service(zeroconf, type, name)
 
     def remove_service(self, zeroconf, type, name):
@@ -328,18 +327,29 @@ class RepoReleases:
 
         def addMDNShost(hosts, name, info):
             alreadyThere=[x for x in hosts if x["server"] == info.server]
-            if len(alreadyThere)==0:
-                for address in info.addresses:
-                    stringAddress="{}.{}.{}.{}".format(address[0], address[1], address[2],address[3])
-                    logger.debug(stringAddress)
-                    newhost={"name":name, "server":info.server,"address": stringAddress}
-                    # check for version in properties - props is utf8, so decode
-                    if b"version" in info.properties:
-                        newhost["version"]=info.properties[b"version"].decode("UTF8")
-                    logger.debug(newhost)
-                    hosts.append(newhost)
+
+            # work out string address
+            address=info.addresses[0]
+            stringAddress="{}.{}.{}.{}".format(address[0], address[1], address[2],address[3])
+            logger.debug("{} ip {}".format(info.server,stringAddress))
+            hostversion=None
+            if b"version" in info.properties:
+                hostversion=info.properties[b"version"].decode("UTF8")
+
+            if len(alreadyThere)!=0:
+                logger.debug("updating")
+                alreadyThere[0]["address"]=stringAddress
+                if hostversion is not None:
+                    alreadyThere[0]["version"]=hostversion
             else:
-                logger.info("already in list")
+                logger.debug("adding")
+                newhost={"name":name, "server":info.server,"address": stringAddress}
+                # check for version in properties - props is utf8, so decode
+                if b"version" in info.properties:
+                    newhost["version"]=info.properties[b"version"].decode("UTF8")
+                logger.debug(newhost)
+                hosts.append(newhost)
+
 
 
         # carve up the addresses
@@ -381,7 +391,7 @@ class RepoReleases:
 
         while not self._stop:
 
-            if self._lastPoll is None or ((time.time()-self._lastPoll)>self._haconfig["poll"]*60):
+            if self._updatePending or (self._lastPoll is None or ((time.time()-self._lastPoll)>self._haconfig["poll"]*60)):
 
                 logger.debug("Doing a download/upgrade poll")
 
@@ -394,13 +404,9 @@ class RepoReleases:
                 self._lastPoll=time.time()
 
                 # then ask all devices to upgrade
-                if self._updatePending==True:
-                    self.upgradeAllDevices()
-                else:
-                    logger.debug("optimised out an UpgradeAll http://./upgradeAll to reset")
+                self.upgradeAllDevices()
                 
-                # TODO fix this
-                self._updatePending=True
+                self._updatePending=False
 
             time.sleep(60)
 
@@ -433,7 +439,7 @@ class RepoReleases:
                     logger.debug("mdns ver {} rel {} result {}".format(deviceVersion,toprel,doupdate))
 
                 if not doupdate:
-                    logger.debug("optimised out an update")
+                    logger.debug("optimised out an update for {}".format(host["address"]))
                     continue
 
 
@@ -534,6 +540,10 @@ class RepoReleases:
     @cherrypy.expose
     def manifest(self):
         return json.dumps(self._config, indent=4)    
+
+    @cherrypy.expose
+    def hosts(self):
+        return json.dumps(self._mdnshosts, indent=4)    
 
     @cherrypy.expose
     def updateBinary(self,**params):
