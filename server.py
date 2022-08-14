@@ -2,6 +2,7 @@ import cherrypy
 import json
 import threading
 import os
+import signal
 import requests
 import shutil
 import tarfile
@@ -34,7 +35,7 @@ class RepoReleases:
         self._prereleases=[]
         self._legacyRelease=[]
 
-        self._running=False
+        self._fetch_running=False
         self._stop=False
         self._polling=False
         self._streaming=False
@@ -43,11 +44,11 @@ class RepoReleases:
         self._mdnshosts=[]
         self._legacyhosts=[]
 
-
+        self._zeroRunninng=False
         self._poller = threading.Thread(target=self.fetchAssetsTimed_thread, args=())
-        self._zerconf = threading.Thread(target=self.findDevices_thread, args=(2,))
+        self._zero_conf = threading.Thread(target=self.findDevices_thread, args=(2,))
 
-        self._zerconf.start()
+        self._zero_conf.start()
         self._poller.start()
 
         self.loadConfig()
@@ -76,7 +77,7 @@ class RepoReleases:
             with open(HA_ADDON_CONFIG_FILE) as json_file:
                 self._haconfig=json.load(json_file)        
         else:
-            self._haconfig={ "host":"hassio", "logging":"INFO","prerelease":True, "release":True,"legacy":True, "port":8080, "poll":15 }
+            self._haconfig={ "host":"hassio", "logging":"DEBUG","prerelease":True, "release":True,"legacy":True, "port":8080, "poll":15 }
 
 
     def port(self):
@@ -291,12 +292,12 @@ class RepoReleases:
 
     def stopPoller(self):
 
-        if self._running==True:
+        if self._fetch_running==True:
 
             logger.debug("requesting poll stop ...")
             self._stop=True
-            
-            while self._running==True:
+
+            while self._fetch_running and self._zeroRunninng:
                 pass
 
             logger.debug("poll stopped!")
@@ -370,21 +371,24 @@ class RepoReleases:
         logger.critical("findDevices_thread started ...")
 
         zeroconf = Zeroconf()
+        self._zeroRunninng=True
 
         browser = ServiceBrowser(zeroconf, "_barneyman._tcp.local.", self)
         
         while not self._stop:
-            time.sleep(10)
+            time.sleep(2)
             pass
 
-        zeroconf.close()        
+        zeroconf.close()
+        logger.critical("findDevices_thread stopped ...")
 
+        self._zeroRunninng=False
 
     def fetchAssetsTimed_thread(self):
 
         logger.critical("fetchAssetsTimed_thread started ...")
 
-        self._running=True
+        self._fetch_running=True
 
         self._lastPoll=None
 
@@ -407,11 +411,10 @@ class RepoReleases:
                 
                 self._updatePending=False
 
-            time.sleep(60)
+            time.sleep(3)
 
-        self._running=False
-
-        logger.critical("fetchAssetsTimed_thread stopping ...")
+        logger.critical("fetchAssetsTimed_thread stoped")
+        self._fetch_running=False
 
     def upgradeAllDevices(self, legacy=False):
 
@@ -695,12 +698,18 @@ if __name__ == '__main__':
 
     myrels=RepoReleases("barneyman","ESP8266-Light-Switch")
 
+    main_running=True
+
     def signal_handler(sig, frame):
 
+        global main_running
         logger.warning("Detected SIGINT")
         # stop my thread
         myrels.stopPoller()
+        cherrypy.engine.exit()
+        main_running=False
 
+    signal.signal(signal.SIGINT, signal_handler)
 
 
     try:
@@ -710,8 +719,8 @@ if __name__ == '__main__':
 
         cherrypy.quickstart(myrels)
 
-        while True:
-            time.sleep(60)
+        while main_running:
+            time.sleep(2)
 
     except Exception as e:
 
