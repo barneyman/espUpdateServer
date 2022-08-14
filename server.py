@@ -7,7 +7,6 @@ import requests
 import shutil
 import tarfile
 import time
-import signal
 import logging
 import re
 import sys
@@ -451,7 +450,6 @@ class RepoReleases:
             # which is populated from options in config.json
 
             myIP=myrels._haconfig["host"]
-
             myPort=cherrypy.server.socket_port
 
             if legacy==True:
@@ -560,6 +558,104 @@ class RepoReleases:
     def upgradeAll(self):
         self._updatePending=True
         return 
+
+    @cherrypy.expose
+    def dev_test(self,**params):
+        # get the ip
+        testdevice=cherrypy.request.params.get("device")
+
+        myIP="192.168.51.112"
+        myPort=cherrypy.server.socket_port
+
+        body={"url":"http://{}:{}/dev_updateBinary".format(myIP,myPort),"urlSpiffs":"http://{}:{}/dev_updateSpiffs".format(myIP,myPort)}
+
+        body=json.dumps(body)
+        upgradeUrl="http://{}/json/upgrade".format(testdevice)
+
+        logger.info("Asking %s to update itself",testdevice) 
+        logger.debug("calling %s with %s",upgradeUrl, body)
+
+
+        try:
+            # Content-Type: text/plain 
+            req=requests.post(upgradeUrl, body, headers={'Content-Type':'text/plain'})
+
+            if req.status_code==200:
+                # stop us getting bombarded
+                time.sleep(10)
+            else:
+                logger.error("Response to UpgradeYourself was %s - Upgrade Only When Off, or refusing pre-rels?",req.status_code)
+
+
+
+        except Exception as e:
+            logger.error(e)
+
+        return
+
+
+    @cherrypy.expose
+    def dev_updateBinary(self,**params):
+        return self.dev_sendUpdateFile("bin")
+
+    @cherrypy.expose
+    def dev_updateSpiffs(self,**params):
+        return self.dev_sendUpdateFile("spiffs")
+
+
+    # no frills, force a specific file over - for testing 
+    def dev_sendUpdateFile(self, filetail):
+
+        currentDeviceVer = cherrypy.request.headers.get('X-Esp8266-Version')
+
+        if currentDeviceVer is None:
+            return "Missing header"
+
+        userAgent=cherrypy.request.headers.get('User-Agent')
+
+        logger.debug("serve update request %s ver %s",userAgent, currentDeviceVer)
+
+        # carve that up
+        hardware = currentDeviceVer.split("|")
+        if len(hardware)!=2:
+            # not expected
+            cherrypy.response.status=406
+            logger.warning("HTTPUpdate - Error - malformed hardware|version %s",currentDeviceVer)
+            return "Error - malformed hardware|version"
+
+        dev_hardware="wemosd1"
+        if hardware!=dev_hardware:
+            return "Error - malformed hardware|version"
+
+
+        # then carve it up
+        deviceVersion=self.crackVersion(hardware[1])
+
+        if deviceVersion is None:
+            # malformed 
+            cherrypy.response.status=406
+            logger.warning("HTTPUpdate - Error - malformed version")
+            return "Error - malformed version"
+
+        # check if we're polling
+        if self._polling==True:
+            logger.warning("HTTPUpdate - Busy")
+            cherrypy.response.status=503
+            return "Busy"
+
+        macAddress = cherrypy.request.headers.get('X-Esp8266-Sta-Mac')
+        #logger.info(cherrypy.request.headers)
+        logger.info("Heard from %s - %s",currentDeviceVer, macAddress) 
+
+        name= os.path.join("/devtest",dev_hardware+filetail)
+
+        logger.info("returning %s",name)
+
+        basename = os.path.basename(name)
+        filename = name
+        mime     = 'application/octet-stream'
+        return cherrypy.lib.static.serve_file(filename, mime, basename)
+
 
 
     def sendUpdateFile(self, fileTail):
