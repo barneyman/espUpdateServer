@@ -52,7 +52,7 @@ class RepoReleases:
 
         self.loadConfig()
 
-        logger.critical("Setting logging to '{}'".format(self._haconfig["logging"]))
+        logger.critical("Setting logging to '%s'",self._haconfig["logging"])
 
         logger.setLevel(self._haconfig["logging"])
 
@@ -113,17 +113,17 @@ class RepoReleases:
 
             # we ignore all drafts
             if "draft" in eachRelease and eachRelease["draft"]==True:
-                logger.debug("Skipping DRAFT {}".format(eachRelease["tag_name"]))
+                logger.debug("Skipping DRAFT %s",eachRelease["tag_name"])
                 continue
 
             if "prerelease" in eachRelease and eachRelease["prerelease"]==True:
-                logger.debug("Found prerelease {}".format(eachRelease["tag_name"]))
+                logger.debug("Found prerelease %s",eachRelease["tag_name"])
                 self._prereleases.append(eachRelease)
             else:
-                logger.debug("Found release {}".format(eachRelease["tag_name"]))
+                logger.debug("Found release %s",eachRelease["tag_name"])
                 self._releases.append(eachRelease)
             
-        logger.info("Found {} releases, {} pre-releases".format(len(self._releases),len(self._prereleases)))
+        logger.info("Found %s releases, %s pre-releases",len(self._releases),len(self._prereleases))
 
         # then get legacy
         legacy=self.fetchSingleRelease(26335159)
@@ -141,7 +141,7 @@ class RepoReleases:
         if req.status_code==200:
             return req.json()
 
-        logger.error("fetchSingleRelease : {} returned {}".format(url, req.status_code))
+        logger.error("fetchSingleRelease : %s returned %s",url, req.status_code)
 
         return None
 
@@ -156,7 +156,7 @@ class RepoReleases:
         if req.status_code==200:
             return req.json()
 
-        logger.error("fetchListOfAllReleases : {} returned {}".format(url, req.status_code))
+        logger.error("fetchListOfAllReleases : %s returned %s",url, req.status_code)
 
         return None
 
@@ -171,22 +171,22 @@ class RepoReleases:
         if req.status_code==200:
             return req.json()
 
-        logger.error("fetchReleaseAssets : {} returned {}".format(url, req.status_code))
+        logger.error("fetchReleaseAssets : %s returned %s",url, req.status_code)
 
         return None
 
 
-    def downloadReleaseAsset(self, release, dir):
+    def downloadReleaseAsset(self, release, asset_dir):
 
-        osdir=os.path.join(DATA_STEM,dir)
+        osdir=os.path.join(DATA_STEM,asset_dir)
 
-        # always ensure dir is there
-        if not os.path.exists(dir) or not os.path.isdir(dir):
-            logger.debug("Creating directory %s", dir)
-            os.mkdir(dir)
+        # always ensure asset_dir is there
+        if not os.path.exists(asset_dir) or not os.path.isdir(asset_dir):
+            logger.debug("Creating directory %s", asset_dir)
+            os.mkdir(asset_dir)
 
-        self._config["manifest"][dir]["tag_name"]=release["tag_name"]
-        self._config["manifest"][dir]["files"]=[]
+        self._config["manifest"][asset_dir]["tag_name"]=release["tag_name"]
+        self._config["manifest"][asset_dir]["files"]=[]
 
         # has assets
         if "assets" in release and len(release["assets"])>0:
@@ -200,7 +200,7 @@ class RepoReleases:
 
                         filename=eachAsset["name"]
 
-                        logger.debug("Creating file {}".format(filename))
+                        logger.debug("Creating file %s",filename)
 
                         with open(filename, 'wb') as fd:
                             #fd.write(req.content)
@@ -215,50 +215,50 @@ class RepoReleases:
                             tf.extractall(osdir)
 
                             for member in tf.getmembers():
-                                self._config["manifest"][dir]["files"].append(member.name)
+                                self._config["manifest"][asset_dir]["files"].append(member.name)
 
-                            logger.debug("Deleting file {}".format(filename))
+                            logger.debug("Deleting file %s",filename)
                             os.remove(filename)
 
-                            logger.debug(self._config["manifest"][dir])
+                            logger.debug(self._config["manifest"][asset_dir])
 
 
                         else:
-                            logger.error("{} is not a tarfile".format(filename))
+                            logger.error("%s is not a tarfile",filename)
                     else:
-                        logger.error("HTTP error {}".format(req.status_code))
+                        logger.error("HTTP error %s",str(req.status_code))
                     
         else:
-            logger.error("no assets for {} '{}'".format(dir, release["name"]))
+            logger.error("no assets for %s '%s'",asset_dir, release["name"])
 
 
 
-    def _downloadIt(self, list, dir):
+    def _downloadIt(self, asset_list, asset_dir):
 
-        logger.info("Fetching {}".format(dir))
+        logger.info("Fetching %s",asset_dir)
 
-        if len(list)>0:
+        if len(asset_list)>0:
 
-            topRelease=list[0]
+            topRelease=asset_list[0]
 
             # check we haven't already got this
-            if dir not in self._config["manifest"] or "tag_name" not in self._config["manifest"][dir] or topRelease["tag_name"] != self._config["manifest"][dir]["tag_name"]:
+            if asset_dir not in self._config["manifest"] or "tag_name" not in self._config["manifest"][asset_dir] or topRelease["tag_name"] != self._config["manifest"][asset_dir]["tag_name"]:
 
                 #sanity check the tag
                 if self.crackVersion(topRelease["tag_name"]) is None:
-                    logger.error("version is malformed {}".format(topRelease["tag_name"]))
+                    logger.error("version is malformed %s",topRelease["tag_name"])
                 else:
                     # we should clean up
-                    if dir in self._config["manifest"] and "files" in self._config["manifest"][dir]:
-                        for eachFile in self._config["manifest"][dir]["files"]:
-                            logger.info("removing {}".format(eachFile))
-                            filetokill=dir+"/"+eachFile
+                    if asset_dir in self._config["manifest"] and "files" in self._config["manifest"][asset_dir]:
+                        for eachFile in self._config["manifest"][asset_dir]["files"]:
+                            logger.info("removing %s",eachFile)
+                            filetokill=asset_dir+"/"+eachFile
                             if os.path.exists(filetokill):
-                                os.remove(dir+"/"+eachFile)
+                                os.remove(asset_dir+"/"+eachFile)
 
-                    self._config["manifest"][dir]={}
+                    self._config["manifest"][asset_dir]={}
 
-                    self.downloadReleaseAsset(topRelease,dir)
+                    self.downloadReleaseAsset(topRelease,asset_dir)
 
                     self.saveConfig()
 
@@ -266,11 +266,11 @@ class RepoReleases:
                     self._updatePending=True
 
             else:
-                logger.info("{} {} assets already downloaded".format(dir, topRelease["tag_name"]))
+                logger.info("%s %s assets already downloaded",asset_dir, topRelease["tag_name"])
 
 
         else:
-            logger.warning("Nothing to download for {}".format(dir))
+            logger.warning("Nothing to download for %s",asset_dir)
 
 
     def downloadLatestAssets(self):
@@ -302,13 +302,13 @@ class RepoReleases:
             logger.debug("poll stopped!")
 
 
-    def update_service(self, zeroconf, type, name):
+    def update_service(self, zeroconf, service_type, name):
         # it's possible the version has changed, catch that
-        self.add_service(zeroconf, type, name)
+        self.add_service(zeroconf, service_type, name)
 
-    def remove_service(self, zeroconf, type, name):
-        logger.info("Service {} removed".format(name))
-        info = zeroconf.get_service_info(type, name)
+    def remove_service(self, zeroconf, service_type, name):
+        logger.info("Service %s removed",name)
+        info = zeroconf.get_service_info(service_type, name)
 
         def delMDNShost(hosts,name, info):
 
@@ -321,9 +321,9 @@ class RepoReleases:
         delMDNShost(self._mdnshosts,name, info)
         
 
-    def add_service(self, zeroconf, type, name):
-        info = zeroconf.get_service_info(type, name)
-        logger.debug("Service {} add_service info {}".format(name, info))
+    def add_service(self, zeroconf, service_type, name):
+        info = zeroconf.get_service_info(service_type, name)
+        logger.debug("Service %s add_service info %s",name, info)
 
 
         def addMDNShost(hosts, name, info):
@@ -332,18 +332,18 @@ class RepoReleases:
             # work out string address
             address=info.addresses[0]
             stringAddress="{}.{}.{}.{}".format(address[0], address[1], address[2],address[3])
-            logger.debug("{} ip {}".format(info.server,stringAddress))
+            logger.debug("%s ip %s",info.server,stringAddress)
             hostversion=None
             if b"version" in info.properties:
                 hostversion=info.properties[b"version"].decode("UTF8")
 
             if len(alreadyThere)!=0:
-                logger.info("updating Service {} add_service info {}".format(name, info))
+                logger.info("updating Service %s add_service info %s",name, info)
                 alreadyThere[0]["address"]=stringAddress
                 if hostversion is not None:
                     alreadyThere[0]["version"]=hostversion
             else:
-                logger.info("adding Service {} add_service info {}".format(name, info))
+                logger.info("adding Service %s add_service info %s",name, info)
                 newhost={"name":name, "server":info.server,"address": stringAddress}
                 # check for version in properties - props is utf8, so decode
                 if b"version" in info.properties:
@@ -415,7 +415,7 @@ class RepoReleases:
 
     def upgradeAllDevices(self, legacy=False):
 
-        logger.info("calling upgradeAllDevices with {} devices".format(len(self._mdnshosts)))
+        logger.info("calling upgradeAllDevices with %s devices",len(self._mdnshosts))
         
         for host in self._mdnshosts:
 
@@ -430,15 +430,15 @@ class RepoReleases:
                     # check the top prerelease
                     toppre=self.crackVersion( self._prereleases[0]["tag_name"])
                     doupdate=self.vgreater(deviceVersion,toppre,True)
-                    logger.debug("mdns ver {} prerel {} result {}".format(deviceVersion,toppre,doupdate))
+                    logger.debug("mdns ver %s prerel %s result %s",deviceVersion,toppre,doupdate)
 
                 if not doupdate:
                     toprel=self.crackVersion( self._releases[0]["tag_name"])
                     doupdate=self.vgreater(deviceVersion,toprel,True)
-                    logger.debug("mdns ver {} rel {} result {}".format(deviceVersion,toprel,doupdate))
+                    logger.debug("mdns ver %s rel %s result %s",deviceVersion,toprel,doupdate)
 
                 if not doupdate:
-                    logger.debug("optimised out an update for {}".format(host["address"]))
+                    logger.debug("optimised out an update for %s",host["address"])
                     continue
 
 
@@ -458,8 +458,8 @@ class RepoReleases:
 
             body=json.dumps(body)
 
-            logger.info("Asking {} to update itself".format(host["address"]) )
-            logger.debug("calling {} with {}".format(upgradeUrl, body))
+            logger.info("Asking %s to update itself",host["address"]) 
+            logger.debug("calling %s with %s",upgradeUrl, body)
 
 
             try:
@@ -470,7 +470,7 @@ class RepoReleases:
                     # stop us getting bombarded
                     time.sleep(10)
                 else:
-                    logger.error("Response to UpgradeYourself was {} - Upgrade Only When Off, or refusing pre-rels?".format(req.status_code))
+                    logger.error("Response to UpgradeYourself was %s - Upgrade Only When Off, or refusing pre-rels?",req.status_code)
 
 
 
@@ -527,7 +527,7 @@ class RepoReleases:
 
         ret={ "version": [ int(cracked.group(1)),int(cracked.group(2)),int(cracked.group(3)) ], "prerelease": preRelease }
 
-        logger.debug("Cracked {} to {}".format(vstring, ret))
+        logger.debug("Cracked %s to %s",vstring, ret)
 
         return ret
 
@@ -567,7 +567,7 @@ class RepoReleases:
         currentDeviceVer = cherrypy.request.headers.get('X-Esp8266-Version')
         userAgent=cherrypy.request.headers.get('User-Agent')
 
-        logger.debug("serve update request {} ver {}".format(userAgent, currentDeviceVer))
+        logger.debug("serve update request %s ver %s",userAgent, currentDeviceVer)
 
         prereleaseOverride=False
         prereleaseRequested=False
@@ -607,7 +607,7 @@ class RepoReleases:
         if len(hardware)!=2:
             # not expected
             cherrypy.response.status=406
-            logger.warning("HTTPUpdate - Error - malformed hardware|version {}".format(currentDeviceVer))
+            logger.warning("HTTPUpdate - Error - malformed hardware|version %s",currentDeviceVer)
             return "Error - malformed hardware|version"
 
         # then carve it up
@@ -615,7 +615,7 @@ class RepoReleases:
 
         # check for prerelease request
         if prereleaseOverride is True:
-            logger.debug("Prerelease override {}".format(prereleaseRequested))
+            logger.debug("Prerelease override %s",prereleaseRequested)
 
 
         if deviceVersion is None:
@@ -633,18 +633,18 @@ class RepoReleases:
 
         # sort out which branch to pass to them
         if legacy==True:
-            dir="legacy"
+            asset_dir="legacy"
         else:
             if prereleaseOverride==False:
-                dir="prereleases" if deviceVersion["prerelease"]==True else "releases"
+                asset_dir="prereleases" if deviceVersion["prerelease"]==True else "releases"
             else:
-                dir="prereleases" if prereleaseRequested==True else "releases"
+                asset_dir="prereleases" if prereleaseRequested==True else "releases"
 
-        Node = self._config["manifest"][dir]
+        Node = self._config["manifest"][asset_dir]
 
         if not self.vgreater(deviceVersion,self.crackVersion(Node["tag_name"]), (prereleaseRequested if prereleaseOverride==True else None)):
             cherrypy.response.status=304
-            logger.info("No upgrade available for {}".format(deviceVersion))
+            logger.info("No upgrade available for %s",deviceVersion)
             return "No upgrade"
 
 
@@ -662,11 +662,11 @@ class RepoReleases:
 
         macAddress = cherrypy.request.headers.get('X-Esp8266-Sta-Mac')
         #logger.info(cherrypy.request.headers)
-        logger.info("Heard from {} - {}".format(currentDeviceVer, macAddress) )
+        logger.info("Heard from %s - %s",currentDeviceVer, macAddress) 
 
-        name= os.path.join(os.path.join(DATA_STEM,dir),newlist[0])
+        name= os.path.join(os.path.join(DATA_STEM,asset_dir),newlist[0])
 
-        logger.info("returning {}".format(name))
+        logger.info("returning %s",name)
 
         basename = os.path.basename(name)
         filename = name
