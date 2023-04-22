@@ -32,6 +32,7 @@ class RepoReleases:
 
         self._releases=[]
         self._prereleases=[]
+        self._nightly=[]
 
         self._fetch_running=False
         self._stop=False
@@ -40,7 +41,6 @@ class RepoReleases:
         self._updatePending=False
 
         self._mdnshosts=[]
-        self._legacyhosts=[]
 
         self._zeroRunninng=False
         self._poller = threading.Thread(target=self.fetchAssetsTimed_thread, args=())
@@ -350,8 +350,6 @@ class RepoReleases:
             # look for legacy
             if info.type=="_barneyman._tcp.local.":
                 addMDNShost(self._mdnshosts,name, info)
-            else:
-                addMDNShost(self._legacyhosts,name, info)
 
 
 
