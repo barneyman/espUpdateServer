@@ -32,7 +32,6 @@ class RepoReleases:
 
         self._releases=[]
         self._prereleases=[]
-        self._legacyRelease=[]
 
         self._fetch_running=False
         self._stop=False
@@ -99,7 +98,6 @@ class RepoReleases:
         # clean up
         self._releases=[]
         self._prereleases=[]
-        self._legacyRelease=[]
 
         # this gets all pre/releases - draft too
         releases=self.fetchListOfAllReleases()
@@ -125,11 +123,6 @@ class RepoReleases:
             
         logger.info("Found %s releases, %s pre-releases",len(self._releases),len(self._prereleases))
 
-        # then get legacy
-        legacy=self.fetchSingleRelease(26335159)
-
-        if legacy is not None:
-            self._legacyRelease.append(legacy)
 
 
     def fetchSingleRelease(self,revision):
@@ -283,8 +276,6 @@ class RepoReleases:
             self._downloadIt(self._releases,"releases")
         if self._haconfig["prerelease"]==True:
             self._downloadIt(self._prereleases,"prereleases")
-        if self._haconfig["legacy"]==True:
-            self._downloadIt(self._legacyRelease,"legacy")
 
 
 
