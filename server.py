@@ -502,7 +502,8 @@ class RepoReleases:
 
     def crackVersion(self,vstring):
 
-        versions=re.match("(v\\d+\\.\\d+\\.\\d+)\\.?(pr)?", vstring)
+        # (v\d+\.\d+\.\d+)[\.-](.*)
+        versions=re.match("(v\\d+\\.\\d+\\.\\d+)[\\.-](.*)", vstring)
 
         if versions is None:
             return None
