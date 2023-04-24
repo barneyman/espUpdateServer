@@ -44,13 +44,15 @@
 	},
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	"forwardPorts": [8080],
+	//"forwardPorts": ["8080:8080"],
+	"appPort": ["8080:8080"],
 
-	"mounts": ["source=C:\\Users\\bjf\\Documents\\Arduino\\esp8266\\lightswitch\\ESP8266-Light-Switch\\data.vue,target=/devtest,type=bind,consistency=cached"]
+
+	"mounts": ["source=/home/pi/source/bjf/ESP8266-Light-Switch/build,target=/devtest,type=bind,consistency=cached"],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
 	// "postCreateCommand": "pip3 install --user -r requirements.txt",
 
 	// Comment out to connect as root instead. More info: https://aka.ms/vscode-remote/containers/non-root.
-	// "remoteUser": "vscode"
+	"remoteUser": "root"
 }
