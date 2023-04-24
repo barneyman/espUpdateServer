@@ -10,12 +10,12 @@ import time
 import logging
 import re
 import sys
-import socket
+import zipfile
 from zeroconf import ServiceBrowser, Zeroconf
 
 DATA_STEM="/data"
 
-CONFIG_FILE="./server_config.json"
+CONFIG_FILE="/data/server_config.json"
 HA_ADDON_CONFIG_FILE="/data/options.json"
 
 #LOG_FILE=DATA_STEM+"./server.log"
@@ -75,7 +75,7 @@ class RepoReleases:
             with open(HA_ADDON_CONFIG_FILE) as json_file:
                 self._haconfig=json.load(json_file)        
         else:
-            self._haconfig={ "host":"hassio", "logging":"DEBUG","prerelease":True, "release":True,"legacy":True, "port":8080, "poll":15 }
+            self._haconfig={ "host":"hassio", "logging":"DEBUG","prerelease":True, "release":True,"port":8080, "poll":15 }
 
 
     def port(self):
@@ -98,6 +98,25 @@ class RepoReleases:
         # clean up
         self._releases=[]
         self._prereleases=[]
+
+        runs=self.FetchActionRuns()
+        nightlys=self.fetchActionArtifacts()
+
+        if nightlys is not None and runs is not None:
+        
+            for eachRun in runs["workflow_runs"]:
+                if eachRun["conclusion"]!="success":
+                    continue
+                if eachRun["event"]!="push":
+                    continue
+        
+                # now look for assets for it
+                for each in nightlys["artifacts"]:
+                    if each["workflow_run"]["id"]==eachRun["id"]:
+                        if each["name"] in ["wemosD1", "sonoff_basic", "esp32_cam"]:
+                            self._nightly.append(each)
+                if len(self._nightly):
+                    break
 
         # this gets all pre/releases - draft too
         releases=self.fetchListOfAllReleases()
@@ -138,6 +157,31 @@ class RepoReleases:
 
         return None
 
+    def FetchActionRuns(self):
+        url="https://api.github.com/repos/{}/{}/actions/runs".format(self._owner,self._repo)
+
+        # get that as json
+        req=requests.get(url)
+        
+        if req.status_code==200:
+            return req.json()
+
+        logger.error("FetchActionRuns : %s returned %s",url, req.status_code)
+        return None
+
+    def fetchActionArtifacts(self):
+        # build the url
+        url="https://api.github.com/repos/{}/{}/actions/artifacts".format(self._owner,self._repo)
+
+        # get that as json
+        req=requests.get(url)
+        
+        if req.status_code==200:
+            return req.json()
+
+        logger.error("fetchActionArtifacts : %s returned %s",url, req.status_code)
+        return None
+
 
     def fetchListOfAllReleases(self):
         # build the url
@@ -174,9 +218,9 @@ class RepoReleases:
         osdir=os.path.join(DATA_STEM,asset_dir)
 
         # always ensure asset_dir is there
-        if not os.path.exists(asset_dir) or not os.path.isdir(asset_dir):
-            logger.debug("Creating directory %s", asset_dir)
-            os.mkdir(asset_dir)
+        if not os.path.exists(osdir) or not os.path.isdir(osdir):
+            logger.debug("Creating directory %s", osdir)
+            os.mkdir(osdir)
 
         self._config["manifest"][asset_dir]["tag_name"]=release["tag_name"]
         self._config["manifest"][asset_dir]["files"]=[]
@@ -191,7 +235,7 @@ class RepoReleases:
         
                     if req.status_code==200:
 
-                        filename=eachAsset["name"]
+                        filename="/tmp/"+eachAsset["name"]
 
                         logger.debug("Creating file %s",filename)
 
@@ -224,9 +268,52 @@ class RepoReleases:
         else:
             logger.error("no assets for %s '%s'",asset_dir, release["name"])
 
+    def _download_artifacts(self):
+
+        osdir=os.path.join(DATA_STEM,"nightly")
+        if not os.path.exists(osdir) or not os.path.isdir(osdir):
+            logger.debug("Creating directory %s", osdir)
+            os.mkdir(osdir)
 
 
-    def _downloadIt(self, asset_list, asset_dir):
+        for each in self._nightly:
+
+            self._config["manifest"]["nightly"]={}
+            self._config["manifest"]["nightly"]["files"]=[]
+
+            # /repos/{owner}/{repo}/actions/artifacts/{artifact_id}/{archive_format}
+            url="https://api.github.com/repos/{}/{}/actions/artifacts/{}/zip".format(self._owner,self._repo,each["id"])
+
+            #Authorization: token $PERSONAL_TOKEN
+
+            if req.status_code==200:
+
+                with open("/tmp/tmp.zip","wb") as zip:
+                    shutil.copyfileobj(req.raw,zip)
+                    zip.close()
+
+                    if zipfile.is_zipfile("/tmp/tmp.zip"):
+                        with zipfile.ZipFile("/tmp/tmp.zip") as unzip:
+                            unzip.extractall(osdir)
+
+                        tarname=os.path.join(osdir,unzip.filelist[0].filename)
+
+                        # should be a tar.gz
+                        tf=tarfile.open(tarname)
+                        tf.extractall(osdir)
+                        for member in tf.getmembers():
+                            self._config["manifest"]["nightly"]["files"].append(member.name)
+                        tf.close()
+                        os.unlink(tarname)
+
+
+                    os.unlink("/tmp/tmp.zip")
+                    self.saveConfig()
+
+
+
+
+    def _download_asset(self, asset_list, asset_dir):
 
         logger.info("Fetching %s",asset_dir)
 
@@ -273,11 +360,12 @@ class RepoReleases:
 
         # work out the newest release, and prerelease
         if self._haconfig["release"]==True:
-            self._downloadIt(self._releases,"releases")
+            self._download_asset(self._releases,"releases")
         if self._haconfig["prerelease"]==True:
-            self._downloadIt(self._prereleases,"prereleases")
+            self._download_asset(self._prereleases,"prereleases")
 
 
+        self._download_artifacts()
 
 
     def stopPoller(self):
@@ -404,7 +492,7 @@ class RepoReleases:
         logger.critical("fetchAssetsTimed_thread stoped")
         self._fetch_running=False
 
-    def upgradeAllDevices(self, legacy=False):
+    def upgradeAllDevices(self):
 
         logger.info("calling upgradeAllDevices with %s devices",len(self._mdnshosts))
         
@@ -441,10 +529,7 @@ class RepoReleases:
             myIP=myrels._haconfig["host"]
             myPort=cherrypy.server.socket_port
 
-            if legacy==True:
-                body={"url":"/updateBinary","host":myIP,"port":myPort}
-            else:
-                body={"url":"http://{}:{}/updateBinary".format(myIP,myPort),"urlSpiffs":"http://{}:{}/updateSpiffs".format(myIP,myPort)}
+            body={"url":"http://{}:{}/updateBinary".format(myIP,myPort),"urlSpiffs":"http://{}:{}/updateSpiffs".format(myIP,myPort)}
 
             body=json.dumps(body)
 
@@ -502,16 +587,16 @@ class RepoReleases:
 
     def crackVersion(self,vstring):
 
-        # (v\d+\.\d+\.\d+)[\.-](.*)
-        versions=re.match("(v\\d+\\.\\d+\\.\\d+)[\\.-](.*)", vstring)
+        # (v\d+\.\d+\.\d+)[\.-]*.*
+        versions=re.match("(v\\d+\\.\\d+\\.\\d+)[\\.-]*(.*)", vstring)
 
         if versions is None:
             return None
 
-        if len(versions.group())!=len(vstring):        
+        if len(versions.group())!=len(vstring):
             return None
 
-        preRelease=True if versions.group(2) is not None else False
+        preRelease=True if versions.group(2) =="pr" else False
 
         # then crack the number
         cracked=re.match("v(\\d+)\\.(\\d+)\\.(\\d+)", vstring)
@@ -586,11 +671,11 @@ class RepoReleases:
 
     @cherrypy.expose
     def dev_updateBinary(self,**params):
-        return self.dev_sendUpdateFile("bin")
+        return self.dev_sendUpdateFile(".bin")
 
     @cherrypy.expose
     def dev_updateSpiffs(self,**params):
-        return self.dev_sendUpdateFile("spiffs")
+        return self.dev_sendUpdateFile(".spiffs")
 
 
     # no frills, force a specific file over - for testing 
@@ -599,6 +684,7 @@ class RepoReleases:
         currentDeviceVer = cherrypy.request.headers.get('X-Esp8266-Version')
 
         if currentDeviceVer is None:
+            cherrypy.response.status=406
             return "Missing header"
 
         userAgent=cherrypy.request.headers.get('User-Agent')
@@ -613,9 +699,11 @@ class RepoReleases:
             logger.warning("HTTPUpdate - Error - malformed hardware|version %s",currentDeviceVer)
             return "Error - malformed hardware|version"
 
-        dev_hardware="wemosd1"
-        if hardware!=dev_hardware:
-            return "Error - malformed hardware|version"
+        # dev_hardware="sonoff_basic"
+        # if hardware[0]!=dev_hardware:
+        #     cherrypy.response.status=406
+        #     logger.warning("HTTPUpdate - Error - malformed hardware %s %s",hardware[0],dev_hardware)
+        #     return "Error - malformed hardware"
 
 
         # then carve it up
@@ -637,7 +725,8 @@ class RepoReleases:
         #logger.info(cherrypy.request.headers)
         logger.info("Heard from %s - %s",currentDeviceVer, macAddress) 
 
-        name= os.path.join("/devtest",dev_hardware+filetail)
+        name= os.path.join("/devtest/",hardware[0])
+        name= os.path.join(name,hardware[0]+filetail)
 
         logger.info("returning %s",name)
 
@@ -684,13 +773,6 @@ class RepoReleases:
             logger.error("HTTPUpdate - Error - no version")
             return "Error - no version"
 
-        legacy=False
-        # arooga - special, legacy case
-        if currentDeviceVer.startswith("lightS_"):
-            currentDeviceVer="sonoff_basic|v0.0.0"
-            legacy=True
-
-
         # carve that up
         hardware = currentDeviceVer.split("|")
         if len(hardware)!=2:
@@ -721,13 +803,10 @@ class RepoReleases:
             return "Busy"
 
         # sort out which branch to pass to them
-        if legacy==True:
-            asset_dir="legacy"
+        if prereleaseOverride==False:
+            asset_dir="prereleases" if deviceVersion["prerelease"]==True else "releases"
         else:
-            if prereleaseOverride==False:
-                asset_dir="prereleases" if deviceVersion["prerelease"]==True else "releases"
-            else:
-                asset_dir="prereleases" if prereleaseRequested==True else "releases"
+            asset_dir="prereleases" if prereleaseRequested==True else "releases"
 
         Node = self._config["manifest"][asset_dir]
 
