@@ -46,7 +46,7 @@
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	//"forwardPorts": ["8080:8080"],
 	"appPort": ["8080:8080"],
-
+	"runArgs": ["--network=host"],
 
 	"mounts": ["source=/home/pi/source/bjf/ESP8266-Light-Switch/build,target=/devtest,type=bind,consistency=cached"],
 
