@@ -817,7 +817,7 @@ class RepoReleases:
 
 
         # now we have to carve the hardware
-        lookfor=hardware[0]+"_.*\\."+fileTail+"$"
+        lookfor=hardware[0]+"-.*\\."+fileTail+"$"
         r=re.compile(lookfor)
         newlist = list(filter(r.match, Node["files"])) # Read Note
 
