@@ -42,6 +42,8 @@ class RepoReleases:
 
         self._mdnshosts=[]
 
+        self.loadConfig()
+
         self._zeroRunninng=False
         self._poller = threading.Thread(target=self.fetchAssetsTimed_thread, args=())
         self._zero_conf = threading.Thread(target=self.findDevices_thread, args=(2,))
@@ -49,7 +51,6 @@ class RepoReleases:
         self._zero_conf.start()
         self._poller.start()
 
-        self.loadConfig()
 
         logger.critical("Setting logging to '%s'",self._haconfig["logging"])
 
@@ -75,7 +76,7 @@ class RepoReleases:
             with open(HA_ADDON_CONFIG_FILE) as json_file:
                 self._haconfig=json.load(json_file)        
         else:
-            self._haconfig={ "host":"hassio", "logging":"DEBUG","prerelease":True, "release":True,"port":8080, "poll":15 }
+            self._haconfig={ "host":"debian", "logging":"DEBUG","nightly":True, "release":True,"port":8080, "poll":15 }
 
 
     def port(self):
@@ -104,19 +105,17 @@ class RepoReleases:
 
         if nightlys is not None and runs is not None:
         
-            for eachRun in runs["workflow_runs"]:
-                if eachRun["conclusion"]!="success":
-                    continue
-                if eachRun["event"]!="push":
-                    continue
-        
+            lastRun=runs["workflow_runs"][0]
+
+            if lastRun["conclusion"]=="success" and lastRun["event"]=="push":
+
                 # now look for assets for it
                 for each in nightlys["artifacts"]:
-                    if each["workflow_run"]["id"]==eachRun["id"]:
-                        if each["name"] in ["wemosD1", "sonoff_basic", "esp32_cam"]:
-                            self._nightly.append(each)
-                if len(self._nightly):
-                    break
+                    if each["workflow_run"]["id"]==lastRun["id"]:
+                        for types in ["wemosD1", "sonoff_basic", "esp32_cam"]:
+                            if each["name"].find(types)!=-1: 
+                                self._nightly.append(each)
+                                break
 
         # this gets all pre/releases - draft too
         releases=self.fetchListOfAllReleases()
@@ -276,41 +275,57 @@ class RepoReleases:
             os.mkdir(osdir)
 
 
-        for each in self._nightly:
+        if len(self._nightly):
+            tagName=self._nightly[0]["name"].split("-")[1]
 
-            self._config["manifest"]["nightly"]={}
-            self._config["manifest"]["nightly"]["files"]=[]
+            if "nightly" not in self._config["manifest"] or "tag_name" not in self._config["manifest"]["nightly"] or self._config["manifest"]["nightly"]["tag_name"]!=tagName:
 
-            # /repos/{owner}/{repo}/actions/artifacts/{artifact_id}/{archive_format}
-            url="https://api.github.com/repos/{}/{}/actions/artifacts/{}/zip".format(self._owner,self._repo,each["id"])
+                self._config["manifest"]["nightly"]={}
+                self._config["manifest"]["nightly"]["files"]=[]
 
-            #Authorization: token $PERSONAL_TOKEN
-
-            if req.status_code==200:
-
-                with open("/tmp/tmp.zip","wb") as zip:
-                    shutil.copyfileobj(req.raw,zip)
-                    zip.close()
-
-                    if zipfile.is_zipfile("/tmp/tmp.zip"):
-                        with zipfile.ZipFile("/tmp/tmp.zip") as unzip:
-                            unzip.extractall(osdir)
-
-                        tarname=os.path.join(osdir,unzip.filelist[0].filename)
-
-                        # should be a tar.gz
-                        tf=tarfile.open(tarname)
-                        tf.extractall(osdir)
-                        for member in tf.getmembers():
-                            self._config["manifest"]["nightly"]["files"].append(member.name)
-                        tf.close()
-                        os.unlink(tarname)
+                self._config["manifest"]["nightly"]["tag_name"]=tagName
 
 
-                    os.unlink("/tmp/tmp.zip")
-                    self.saveConfig()
+                for each in self._nightly:
+
+                    # /repos/{owner}/{repo}/actions/artifacts/{artifact_id}/{archive_format}
+                    url="https://api.github.com/repos/{}/{}/actions/artifacts/{}/zip".format(self._owner,self._repo,each["id"])
+
+                    #Authorization: token $PERSONAL_TOKEN
+                    req=requests.get(url, headers={"Authorization":"token "+self._haconfig["token"]}, stream=True)
+
+                    if req.status_code==200:
+
+                        with open("/tmp/tmp.zip","wb") as zip:
+                            shutil.copyfileobj(req.raw,zip)
+                            zip.close()
+
+                            if zipfile.is_zipfile("/tmp/tmp.zip"):
+                                with zipfile.ZipFile("/tmp/tmp.zip") as unzip:
+                                    unzip.extractall(osdir)
+
+                                tarname=os.path.join(osdir,unzip.filelist[0].filename)
+
+                                # should be a tar.gz
+                                tf=tarfile.open(tarname)
+                                tf.extractall(osdir)
+                                for member in tf.getmembers():
+                                    self._config["manifest"]["nightly"]["files"].append(member.name)
+                                tf.close()
+                                os.unlink(tarname)
 
 
+                            os.unlink("/tmp/tmp.zip")
+                self.saveConfig()
+
+    def _clean_up(self, asset_dir):
+
+        if asset_dir in self._config["manifest"] and "files" in self._config["manifest"][asset_dir]:
+            for eachFile in self._config["manifest"][asset_dir]["files"]:
+                logger.info("removing %s",eachFile)
+                filetokill=asset_dir+"/"+eachFile
+                if os.path.exists(filetokill):
+                    os.remove(asset_dir+"/"+eachFile)
 
 
     def _download_asset(self, asset_list, asset_dir):
@@ -329,12 +344,7 @@ class RepoReleases:
                     logger.error("version is malformed %s",topRelease["tag_name"])
                 else:
                     # we should clean up
-                    if asset_dir in self._config["manifest"] and "files" in self._config["manifest"][asset_dir]:
-                        for eachFile in self._config["manifest"][asset_dir]["files"]:
-                            logger.info("removing %s",eachFile)
-                            filetokill=asset_dir+"/"+eachFile
-                            if os.path.exists(filetokill):
-                                os.remove(asset_dir+"/"+eachFile)
+                    self._clean_up(asset_dir)
 
                     self._config["manifest"][asset_dir]={}
 
@@ -361,11 +371,9 @@ class RepoReleases:
         # work out the newest release, and prerelease
         if self._haconfig["release"]==True:
             self._download_asset(self._releases,"releases")
-        if self._haconfig["prerelease"]==True:
-            self._download_asset(self._prereleases,"prereleases")
 
-
-        self._download_artifacts()
+        if self._haconfig["nightly"]==True:
+            self._download_artifacts()
 
 
     def stopPoller(self):
@@ -503,22 +511,23 @@ class RepoReleases:
                 hardware = host["version"].split("|")
                 deviceVersion=self.crackVersion(hardware[1])
 
-                doupdate=False
+                doupdate=True
+                # doupdate=False
 
-                if self._haconfig["prerelease"] and deviceVersion["prerelease"]:
-                    # check the top prerelease
-                    toppre=self.crackVersion( self._prereleases[0]["tag_name"])
-                    doupdate=self.vgreater(deviceVersion,toppre,True)
-                    logger.debug("mdns ver %s prerel %s result %s",deviceVersion,toppre,doupdate)
+                # if self._haconfig["prerelease"] and deviceVersion["prerelease"]:
+                #     # check the top prerelease
+                #     toppre=self.crackVersion( self._prereleases[0]["tag_name"])
+                #     doupdate=self.vgreater(deviceVersion,toppre)
+                #     logger.debug("mdns ver %s prerel %s result %s",deviceVersion,toppre,doupdate)
 
-                if not doupdate:
-                    toprel=self.crackVersion( self._releases[0]["tag_name"])
-                    doupdate=self.vgreater(deviceVersion,toprel,True)
-                    logger.debug("mdns ver %s rel %s result %s",deviceVersion,toprel,doupdate)
+                # if not doupdate:
+                #     toprel=self.crackVersion( self._releases[0]["tag_name"])
+                #     doupdate=self.vgreater(deviceVersion,toprel)
+                #     logger.debug("mdns ver %s rel %s result %s",deviceVersion,toprel,doupdate)
 
-                if not doupdate:
-                    logger.debug("optimised out an update for %s",host["address"])
-                    continue
+                # if not doupdate:
+                #     logger.debug("optimised out an update for %s",host["address"])
+                #     continue
 
 
             upgradeUrl="http://{}/json/upgrade".format(host["address"])
@@ -554,7 +563,7 @@ class RepoReleases:
             
 
 
-    def vgreater(self, earlier, later, prerelease):
+    def vgreater(self, earlier, later):
 
         # major
         if earlier["version"][0] > later["version"][0]:
@@ -577,9 +586,6 @@ class RepoReleases:
         # debug
         elif earlier["version"][2] < later["version"][2]:
             return True
-        # if they're the same version, but the device has the PR migrate to the release
-        elif (earlier["version"][2] == later["version"][2]) and earlier["prerelease"]==True and later["prerelease"]==False:
-            return True
 
         return False
         
@@ -596,12 +602,10 @@ class RepoReleases:
         if len(versions.group())!=len(vstring):
             return None
 
-        preRelease=True if versions.group(2) =="pr" else False
-
         # then crack the number
         cracked=re.match("v(\\d+)\\.(\\d+)\\.(\\d+)", vstring)
 
-        ret={ "version": [ int(cracked.group(1)),int(cracked.group(2)),int(cracked.group(3)) ], "prerelease": preRelease }
+        ret={ "version": [ int(cracked.group(1)),int(cracked.group(2)),int(cracked.group(3)) ] }
 
         logger.debug("Cracked %s to %s",vstring, ret)
 
@@ -747,20 +751,14 @@ class RepoReleases:
 
         logger.debug("serve update request %s ver %s",userAgent, currentDeviceVer)
 
-        prereleaseOverride=False
         prereleaseRequested=False
         
         # if we are hosting prerels
-        if self._haconfig["prerelease"]:
+        if self._haconfig["nightly"]:
             #get the arg
-            if cherrypy.request.params.get("prerelease") is not None:
-                prereleaseOverride=True
-                if cherrypy.request.params.get("prerelease")=="true":
+            if cherrypy.request.params.get("nightly") is not None:
+                if cherrypy.request.params.get("nightly")=="true":
                     prereleaseRequested=True
-                else:
-                    prereleaseRequested=False
-        else:
-            prereleaseOverride=True
 
 
         if userAgent is None or userAgent!="ESP8266-http-Update":
@@ -785,8 +783,7 @@ class RepoReleases:
         deviceVersion=self.crackVersion(hardware[1])
 
         # check for prerelease request
-        if prereleaseOverride is True:
-            logger.debug("Prerelease override %s",prereleaseRequested)
+        logger.debug("nightly requested %s",prereleaseRequested)
 
 
         if deviceVersion is None:
@@ -803,14 +800,11 @@ class RepoReleases:
             return "Busy"
 
         # sort out which branch to pass to them
-        if prereleaseOverride==False:
-            asset_dir="prereleases" if deviceVersion["prerelease"]==True else "releases"
-        else:
-            asset_dir="prereleases" if prereleaseRequested==True else "releases"
+        asset_dir="nightly" if prereleaseRequested==True else "releases"
 
         Node = self._config["manifest"][asset_dir]
 
-        if not self.vgreater(deviceVersion,self.crackVersion(Node["tag_name"]), (prereleaseRequested if prereleaseOverride==True else None)):
+        if "tag_name" not in Node or not self.vgreater(deviceVersion,self.crackVersion(Node["tag_name"])):
             cherrypy.response.status=304
             logger.info("No upgrade available for %s",deviceVersion)
             return "No upgrade"
@@ -826,6 +820,15 @@ class RepoReleases:
             cherrypy.response.status=500
             logger.warning("HTTPUpdate - No candidate")
             return "No candidate"
+
+        # TODO remove this
+        # logger.info("Would have served them a file {}".format(newlist[0]))
+
+        # cherrypy.response.status=500
+        # logger.warning("HTTPUpdate - No candidate")
+        # return "No candidate"
+
+
 
 
         macAddress = cherrypy.request.headers.get('X-Esp8266-Sta-Mac')
