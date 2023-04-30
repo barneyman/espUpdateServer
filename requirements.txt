@@ -1,4 +1,3 @@
 zeroconf
 cherrypy
 requests
-zipfile
