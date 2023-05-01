@@ -99,6 +99,7 @@ class RepoReleases:
         # clean up
         self._releases=[]
         self._prereleases=[]
+        self._nightly=[]
 
         runs=self.FetchActionRuns()
         nightlys=self.fetchActionArtifacts()
@@ -280,6 +281,8 @@ class RepoReleases:
 
             if "nightly" not in self._config["manifest"] or "tag_name" not in self._config["manifest"]["nightly"] or self._config["manifest"]["nightly"]["tag_name"]!=tagName:
 
+                self._clean_up("nightly")
+
                 self._config["manifest"]["nightly"]={}
                 self._config["manifest"]["nightly"]["files"]=[]
 
@@ -323,9 +326,9 @@ class RepoReleases:
         if asset_dir in self._config["manifest"] and "files" in self._config["manifest"][asset_dir]:
             for eachFile in self._config["manifest"][asset_dir]["files"]:
                 logger.info("removing %s",eachFile)
-                filetokill=asset_dir+"/"+eachFile
+                filetokill=DATA_STEM+"/"+asset_dir+"/"+eachFile
                 if os.path.exists(filetokill):
-                    os.remove(asset_dir+"/"+eachFile)
+                    os.remove(filetokill)
 
 
     def _download_asset(self, asset_list, asset_dir):
@@ -504,7 +507,13 @@ class RepoReleases:
 
         logger.info("calling upgradeAllDevices with %s devices",len(self._mdnshosts))
         
-        for host in self._mdnshosts:
+        # we are updating them, they sign off from mdns so this list traversal is broken
+        new_list = [i for i in self._mdnshosts]
+
+        for host in new_list:
+
+            # if host["name"].find("8766C0")==-1:
+            #     continue
 
             # quick optimisation, if there is a version, crack it early
             if "version" in host:
@@ -661,7 +670,7 @@ class RepoReleases:
 
             if req.status_code==200:
                 # stop us getting bombarded
-                time.sleep(10)
+                pass
             else:
                 logger.error("Response to UpgradeYourself was %s - Upgrade Only When Off, or refusing pre-rels?",req.status_code)
 
@@ -692,6 +701,13 @@ class RepoReleases:
             return "Missing header"
 
         userAgent=cherrypy.request.headers.get('User-Agent')
+
+        update_type=cherrypy.request.headers.get('x-ESP8266-mode')
+        if update_type is not None:
+            if update_type=="sketch":
+                filetail="bin"
+            else:
+                filetail="spiffs"
 
         logger.debug("serve update request %s ver %s",userAgent, currentDeviceVer)
 
