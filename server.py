@@ -64,6 +64,7 @@ class RepoReleases:
             with open(CONFIG_FILE) as json_file:
                 self._config=json.load(json_file)        
         else:
+            logger.debug("Creating empty manifest")
             self._config={ "manifest":{} }
 
         self.loadHAconfig()
@@ -76,6 +77,7 @@ class RepoReleases:
             with open(HA_ADDON_CONFIG_FILE) as json_file:
                 self._haconfig=json.load(json_file)        
         else:
+            logger.warning("Creating dev config")
             self._haconfig={ "host":"debian", "logging":"DEBUG","nightly":True, "release":True,"port":8080, "poll":15 }
 
 
